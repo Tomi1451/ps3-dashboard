@@ -312,7 +312,7 @@ static void draw_hints(void)
     x = hint(x, y, 't', "Game info");
     x = hint_pill(x, y, "L1 / R1", "Switch console");
     x = hint_pill(x, y, "START", "Exit");
-    { const char *ver = "v0.5 (" TOOLSET ")"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
+    { const char *ver = "v0.6"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
 }
 
 /* ---------------------------------------------------------------- main */
@@ -331,27 +331,13 @@ s32 main(s32 argc, const char *argv[])
 {
     int i;
     log_reset();
-    log_step("start v0.5, tools: " TOOLSET);
+    log_step("start v0.6");
     gfx_init();
     ioPadInit(7);
     log_step("pads ok");
 
-    /* diagnostic start-up: each piece on its own, logged before and after */
-    {
-        static const char *names[] = { "clear only", "gradient", "gradient+glow", "gradient+glow+lines", "full + text" };
-        static const int parts[] = { 0, 1, 3, 7, 7 };
-        int st, k;
-        for (st = 0; st < 5; st++) {
-            log_step("stage %d (%s) drawing", st + 1, names[st]);
-            for (k = 0; k < 40; k++) {          /* ~2/3 second each */
-                gfx_begin();
-                if (parts[st]) gfx_background_parts(0, parts[st]);
-                if (st == 4) gfx_text_center(SCREEN_W / 2, 500, 36, 0xffffffe0, "Loading your library...");
-                gfx_end();
-                if (k == 0) log_step("stage %d first flip done", st + 1);
-            }
-            log_step("stage %d ok", st + 1);
-        }
+    for (i = 0; i < 2; i++) {   /* both buffers */
+        gfx_begin(); gfx_background(0); gfx_text_center(SCREEN_W / 2, 500, 36, 0xffffffe0, "Loading your library..."); gfx_end();
     }
     log_step("first frame drawn");
 

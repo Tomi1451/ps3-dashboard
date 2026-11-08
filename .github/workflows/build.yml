@@ -11,23 +11,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: false
       matrix:
         include:
-          # newest nightly toolchain (GCC 13 + binutils 2.42)
-          - tools: nightly
-            toolchain_tag: ""
-            libraries_tag: ""
-            psl1ght_ref: master
-            test_appid: TSTA00001
-            test_title: "Test A - ghosts (nightly)"
-          # June 2026 toolchain, before the binutils/GCC overhaul
+          # June 2026 toolchain (GCC 7.2 + binutils 2.22) - tested working on a real PS3.
+          # The newer nightly (GCC 13 + binutils 2.42) hangs the RSX on real hardware.
           - tools: june
             toolchain_tag: "2026-06-09"
             libraries_tag: "nightly-2026-06-16"
             psl1ght_ref: b55429b
-            test_appid: TSTB00001
-            test_title: "Test B - ghosts (June)"
     env:
       PS3DEV: ${{ github.workspace }}/ps3dev
       PSL1GHT: ${{ github.workspace }}/ps3dev
@@ -105,18 +96,12 @@ jobs:
           make -C /tmp/tiny3d/lib install
           make -C /tmp/tiny3d/libfont install
 
-      - name: Build test app (unmodified Tiny3D 'sprites2D' sample)
-        run: |
-          cd /tmp/tiny3d/samples/sprites2D
-          make pkg APPID=${{ matrix.test_appid }} TITLE="${{ matrix.test_title }}"
-          mkdir -p "$GITHUB_WORKSPACE/out"
-          cp sprites2D.pkg "$GITHUB_WORKSPACE/out/Test_${{ matrix.tools }}_ghosts.pkg"
-
       - name: Build dashboard PKG
         run: |
           make clean || true
           make pkg TOOLSET=${{ matrix.tools }}
-          cp PS_Dashboard.pkg "out/PS_Dashboard_${{ matrix.tools }}.pkg"
+          mkdir -p out
+          cp PS_Dashboard.pkg out/PS_Dashboard.pkg
           ls -la out
 
       - name: Upload PKGs
@@ -142,4 +127,4 @@ jobs:
           gh release delete latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
           gh release create latest out/*.pkg --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Latest build (${GITHUB_SHA::7})" --prerelease \
-            --notes "PS_Dashboard_june.pkg = built with the June 2026 PS3 toolchain. Test_*_ghosts.pkg = Tiny3D sample used for testing."
+            --notes "Install PS_Dashboard.pkg with the PS3 Package Installer. Built with the June 2026 PS3 toolchain (GCC 7.2)."

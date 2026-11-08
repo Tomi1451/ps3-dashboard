@@ -8,7 +8,9 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+#include <errno.h>
 #include "launch.h"
+#include "log.h"
 
 static int net_ready = 0;
 
@@ -31,7 +33,7 @@ int launch_game(const Game *g)
     struct sockaddr_in sin;
     int s;
 
-    if (!net_ready) { netInitialize(); net_ready = 1; }
+    if (!net_ready) { int r = netInitialize(); log_step("netInitialize = %d", r); net_ready = 1; }
 
     url_encode(enc, sizeof(enc), g->path);
     /* /mount_ps3 = mount the game and start it once we exit */
@@ -43,8 +45,9 @@ int launch_game(const Game *g)
     sin.sin_port = htons(80);
 
     s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s < 0) return 0;
-    if (connect(s, (struct sockaddr *) &sin, sizeof(sin)) < 0) { close(s); return 0; }
+    if (s < 0) { log_step("socket() failed, errno %d", errno); return 0; }
+    if (connect(s, (struct sockaddr *) &sin, sizeof(sin)) < 0) { log_step("connect to 127.0.0.1:80 failed, errno %d (webMAN not running?)", errno); close(s); return 0; }
+    log_step("sent: %s", req);
     send(s, req, strlen(req), 0);
     usleep(300 * 1000);                         /* give webMAN a moment to take the request */
     close(s);
