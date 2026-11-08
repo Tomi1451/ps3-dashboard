@@ -312,7 +312,7 @@ static void draw_hints(void)
     x = hint(x, y, 't', "Game info");
     x = hint_pill(x, y, "L1 / R1", "Switch console");
     x = hint_pill(x, y, "START", "Exit");
-    gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, "v0.3"), y + 8, 18, 0xffffff60, "v0.3");
+    gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, "v0.4"), y + 8, 18, 0xffffff60, "v0.4");
 }
 
 /* ---------------------------------------------------------------- main */

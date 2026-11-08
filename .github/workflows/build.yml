@@ -68,6 +68,18 @@ jobs:
           curl -sL "$url" | tar xz -C "$PSL1GHT"
           ls "$PSL1GHT/portlibs/ppu/lib" | head -50
 
+      # Tiny3D's command-buffer callback is not safe with the modern compiler
+      # (hangs the GPU the first time the buffer wraps) - rebuild it patched.
+      - name: Build Tiny3D with callback fix
+        run: |
+          rm -rf /tmp/tiny3d
+          git clone --depth 1 https://github.com/wargio/tiny3d /tmp/tiny3d
+          python3 tools/fix_tiny3d.py /tmp/tiny3d/lib/source/buffer.c
+          make -C /tmp/tiny3d/lib install
+          make -C /tmp/tiny3d/libfont install
+          echo "---- patched callback as compiled ----"
+          ppu-objdump -d /tmp/tiny3d/lib/build/buffer.o | sed -n '/<tiny_rsxContextCallback>:/,/^$/p'
+
       - name: Build dashboard PKG
         run: |
           make pkg
