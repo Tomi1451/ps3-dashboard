@@ -1,0 +1,89 @@
+name: Build PKG
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PS3DEV: ${{ github.workspace }}/ps3dev
+      PSL1GHT: ${{ github.workspace }}/ps3dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install gcc libelf-dev autoconf automake bison flex make cmake \
+            texinfo patch wget zlib1g-dev libtool-bin bzip2 pkg-config libssl-dev libgmp-dev
+
+      - name: Add toolchain to PATH
+        run: echo "$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin" >> $GITHUB_PATH
+
+      # The SDK below changes rarely; cache it for a week so most builds take ~1 minute.
+      - name: Week number (cache key)
+        id: week
+        run: echo "w=$(date -u +%G-%V)" >> $GITHUB_OUTPUT
+
+      - name: Cache PS3 SDK
+        id: sdk
+        uses: actions/cache@v4
+        with:
+          path: ps3dev
+          key: ps3sdk-${{ runner.os }}-${{ steps.week.outputs.w }}-v1
+
+      - name: Download PS3 toolchain (ps3dev/ps3toolchain, latest prerelease)
+        if: steps.sdk.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          url=$(gh api repos/ps3dev/ps3toolchain/releases --jq '[.[] | select(.prerelease and (.draft|not))] | sort_by(.published_at) | reverse | .[0].assets[] | select(.name=="ps3dev-linux-X64.tar.gz") | .browser_download_url')
+          echo "Toolchain: $url"
+          test -n "$url"
+          curl -sL "$url" | tar xz -C "$GITHUB_WORKSPACE"
+          ls "$PS3DEV"
+
+      - name: Build PSL1GHT SDK
+        if: steps.sdk.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/ps3dev/PSL1GHT.git /tmp/psl1ght
+          cd /tmp/psl1ght
+          make install-ctrl
+          make -j"$(nproc)"
+          make install
+
+      - name: Add libraries (ps3dev/ps3libraries, latest prerelease)
+        if: steps.sdk.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          url=$(gh api repos/ps3dev/ps3libraries/releases --jq '[.[] | select(.prerelease and (.draft|not))] | sort_by(.published_at) | reverse | .[0].assets[] | select(.name=="ps3libraries-linux-X64.tar.gz") | .browser_download_url')
+          echo "Libraries: $url"
+          test -n "$url"
+          curl -sL "$url" | tar xz -C "$PSL1GHT"
+          ls "$PSL1GHT/portlibs/ppu/lib" | head -50
+
+      - name: Build dashboard PKG
+        run: |
+          make pkg
+          ls -la *.pkg
+
+      - name: Upload PKG
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps3-dashboard-pkg
+          path: "*.pkg"
+
+      - name: Publish as "latest" release (easy download)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest *.pkg --title "Latest build (${GITHUB_SHA::7})" \
+            --notes "Install PS_Dashboard.pkg with the PS3 Package Installer (try PS_Dashboard.gnpdrm.pkg if your firmware refuses it)." --prerelease

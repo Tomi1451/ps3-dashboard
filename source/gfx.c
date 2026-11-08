@@ -1,0 +1,281 @@
+/* gfx.c - drawing helpers on a virtual 1920x1080 screen */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+#include <tiny3d.h>
+#include <libfont.h>
+
+#include <ft2build.h>
+#include FT_FREETYPE_H
+
+#include "gfx.h"
+#include "dejavusans_ttf_bin.h"
+
+static u8 *tex_mem_ptr;     /* next free byte of RSX texture memory */
+static u8 *tex_mem_end;
+
+/* ------------------------------------------------------------------ fonts */
+static FT_Library ft_lib;
+static FT_Face    ft_face;
+
+static void ttf_to_bitmap(u8 chr, u8 *bitmap, short *w, short *h, short *y_correction)
+{
+    FT_Set_Pixel_Sizes(ft_face, (*w), (*h));
+    FT_GlyphSlot slot = ft_face->glyph;
+    memset(bitmap, 0, (*w) * (*h));
+    if (FT_Load_Char(ft_face, (unsigned char) chr, FT_LOAD_RENDER)) { (*w) = 0; return; }
+
+    int n, m, ww = 0;
+    *y_correction = (*h) - 1 - slot->bitmap_top;
+    for (n = 0; n < (int) slot->bitmap.rows; n++) {
+        for (m = 0; m < (int) slot->bitmap.width; m++) {
+            if (m >= (*w) || n >= (*h)) continue;
+            bitmap[m] = (u8) slot->bitmap.buffer[ww + m];
+        }
+        bitmap += *w;
+        ww += slot->bitmap.width;
+    }
+    *w = ((slot->advance.x + 31) >> 6) + ((slot->bitmap_left < 0) ? -slot->bitmap_left : 0);
+    *h = slot->bitmap.rows;
+}
+
+static int load_font(void)
+{
+    /* PS3 system font first (clean Sony typography), bundled DejaVu as fallback */
+    static const char *paths[] = {
+        "/dev_flash/data/font/SCE-PS3-SR-R-LATIN2.TTF",
+        "/dev_flash/data/font/SCE-PS3-SR-R-LATIN.TTF",
+        "/dev_flash/data/font/SCE-PS3-RD-R-LATIN2.TTF",
+        "/dev_flash/data/font/SCE-PS3-RD-R-LATIN.TTF",
+        NULL
+    };
+    int i;
+    FT_Init_FreeType(&ft_lib);
+    for (i = 0; paths[i]; i++)
+        if (FT_New_Face(ft_lib, paths[i], 0, &ft_face) == 0) return 1;
+    if (FT_New_Memory_Face(ft_lib, (const FT_Byte *) dejavusans_ttf_bin, dejavusans_ttf_bin_size, 0, &ft_face) == 0) return 1;
+    return 0;
+}
+
+/* ------------------------------------------------------------------ setup */
+void gfx_init(void)
+{
+    tiny3d_Init(1024 * 1024);
+
+    u32 size = 80 * 1024 * 1024;   /* 80 MB for font + cover textures */
+    u8 *mem = (u8 *) tiny3d_AllocTexture(size);
+    if (!mem) exit(0);
+    tex_mem_ptr = mem;
+    tex_mem_end = mem + size;
+
+    ResetFont();
+    if (load_font()) {
+        tex_mem_ptr = AddFontFromTTF(tex_mem_ptr, 32, 255, 64, 64, ttf_to_bitmap);
+        FT_Done_Face(ft_face);
+    }
+    FT_Done_FreeType(ft_lib);
+
+    /* virtual 1920x1080 screen at any output resolution */
+    float sx = (float) Video_Resolution.width, sy = (float) Video_Resolution.height;
+    tiny3d_UserViewport(1, 0.0f, 0.0f, sx / SCREEN_W, sy / SCREEN_H, sx / 1920.0f, sy / 1080.0f);
+    SetFontScreenLimits(SCREEN_W, SCREEN_H);
+    SetFontZ(0.0f);
+}
+
+u32 *gfx_tex_alloc(u32 bytes)
+{
+    bytes = (bytes + 15) & ~15;
+    if (tex_mem_ptr + bytes > tex_mem_end) return NULL;
+    u32 *p = (u32 *) tex_mem_ptr;
+    tex_mem_ptr += bytes;
+    return p;
+}
+
+void gfx_begin(void)
+{
+    tiny3d_Clear(0xff020a22, TINY3D_CLEAR_ALL);
+    tiny3d_AlphaTest(1, 0x01, TINY3D_ALPHA_FUNC_GEQUAL);
+    tiny3d_BlendFunc(1, TINY3D_BLEND_FUNC_SRC_RGB_SRC_ALPHA | TINY3D_BLEND_FUNC_SRC_ALPHA_SRC_ALPHA,
+                     TINY3D_BLEND_FUNC_DST_RGB_ONE_MINUS_SRC_ALPHA | TINY3D_BLEND_FUNC_DST_ALPHA_ZERO,
+                     TINY3D_BLEND_RGB_FUNC_ADD | TINY3D_BLEND_ALPHA_FUNC_ADD);
+    tiny3d_Project2D();
+}
+
+void gfx_end(void)
+{
+    tiny3d_Flip();
+}
+
+/* ------------------------------------------------------------------ shapes */
+void gfx_rect(float x, float y, float w, float h, u32 c)
+{
+    tiny3d_SetPolygon(TINY3D_QUADS);
+    tiny3d_VertexPos(x, y, 1000);         tiny3d_VertexColor(c);
+    tiny3d_VertexPos(x + w, y, 1000);     tiny3d_VertexColor(c);
+    tiny3d_VertexPos(x + w, y + h, 1000); tiny3d_VertexColor(c);
+    tiny3d_VertexPos(x, y + h, 1000);     tiny3d_VertexColor(c);
+    tiny3d_End();
+}
+
+void gfx_rect_v(float x, float y, float w, float h, u32 top, u32 bottom)
+{
+    tiny3d_SetPolygon(TINY3D_QUADS);
+    tiny3d_VertexPos(x, y, 1000);         tiny3d_VertexColor(top);
+    tiny3d_VertexPos(x + w, y, 1000);     tiny3d_VertexColor(top);
+    tiny3d_VertexPos(x + w, y + h, 1000); tiny3d_VertexColor(bottom);
+    tiny3d_VertexPos(x, y + h, 1000);     tiny3d_VertexColor(bottom);
+    tiny3d_End();
+}
+
+void gfx_frame(float x, float y, float w, float h, float t, u32 c)
+{
+    gfx_rect(x - t, y - t, w + 2 * t, t, c);
+    gfx_rect(x - t, y + h, w + 2 * t, t, c);
+    gfx_rect(x - t, y, t, h, c);
+    gfx_rect(x + w, y, t, h, c);
+}
+
+void gfx_image(const Texture *t, float x, float y, float w, float h, u32 tint)
+{
+    float u = (float) t->w / (float) t->tex_w, v = (float) t->h / (float) t->tex_h;
+    tiny3d_SetTexture(0, t->offset, t->tex_w, t->tex_h, t->tex_w * 4, TINY3D_TEX_FORMAT_A8R8G8B8, TEXTURE_LINEAR);
+    tiny3d_SetPolygon(TINY3D_QUADS);
+    tiny3d_VertexPos(x, y, 1000);         tiny3d_VertexColor(tint); tiny3d_VertexTexture(0.0f, 0.0f);
+    tiny3d_VertexPos(x + w, y, 1000);     tiny3d_VertexColor(tint); tiny3d_VertexTexture(u, 0.0f);
+    tiny3d_VertexPos(x + w, y + h, 1000); tiny3d_VertexColor(tint); tiny3d_VertexTexture(u, v);
+    tiny3d_VertexPos(x, y + h, 1000);     tiny3d_VertexColor(tint); tiny3d_VertexTexture(0.0f, v);
+    tiny3d_End();
+}
+
+void gfx_image_fit(const Texture *t, float x, float y, float w, float h, u32 tint)
+{
+    float s = fminf(w / (float) t->w, h / (float) t->h);
+    float dw = t->w * s, dh = t->h * s;
+    gfx_image(t, x + (w - dw) / 2.0f, y + (h - dh), dw, dh, tint);  /* sits on the shelf */
+}
+
+/* ------------------------------------------------------------------ background */
+#define GX 24
+#define GY 14
+static u32 bg_col[GX + 1][GY + 1];
+static int bg_ready = 0;
+
+static u32 lerp_col(u32 a, u32 b, float t)
+{
+    int ar = a >> 24, ag = (a >> 16) & 255, ab = (a >> 8) & 255;
+    int br = b >> 24, bg = (b >> 16) & 255, bb = (b >> 8) & 255;
+    return RGBA(ar + (br - ar) * t, ag + (bg - ag) * t, ab + (bb - ab) * t, 255);
+}
+
+static void bg_prepare(void)
+{
+    /* Classic PS3 blue: bright centre, deep navy edges */
+    const u32 c0 = 0x2563d9ff, c1 = 0x0d3591ff, c2 = 0x061a52ff, c3 = 0x020a22ff;
+    int i, j;
+    for (i = 0; i <= GX; i++)
+        for (j = 0; j <= GY; j++) {
+            float x = SCREEN_W * i / GX, y = SCREEN_H * j / GY;
+            float dx = (x - 960.0f) / 1150.0f, dy = (y - 300.0f) / 950.0f;
+            float r = sqrtf(dx * dx + dy * dy);
+            u32 c;
+            if (r < 0.34f) c = lerp_col(c0, c1, r / 0.34f);
+            else if (r < 0.66f) c = lerp_col(c1, c2, (r - 0.34f) / 0.32f);
+            else c = lerp_col(c2, c3, fminf(1.0f, (r - 0.66f) / 0.34f));
+            bg_col[i][j] = c;
+        }
+    bg_ready = 1;
+}
+
+static float wave_y(float x, float phase, float off)
+{
+    return 770.0f + off + 62.0f * sinf(x * 0.0029f + phase) + 26.0f * sinf(x * 0.0012f - phase * 0.7f + off * 0.05f);
+}
+
+void gfx_background(float phase)
+{
+    int i, j;
+    if (!bg_ready) bg_prepare();
+
+    tiny3d_SetPolygon(TINY3D_QUADS);
+    for (i = 0; i < GX; i++)
+        for (j = 0; j < GY; j++) {
+            float x0 = SCREEN_W * i / GX, x1 = SCREEN_W * (i + 1) / GX;
+            float y0 = SCREEN_H * j / GY, y1 = SCREEN_H * (j + 1) / GY;
+            tiny3d_VertexPos(x0, y0, 1000); tiny3d_VertexColor(bg_col[i][j]);
+            tiny3d_VertexPos(x1, y0, 1000); tiny3d_VertexColor(bg_col[i + 1][j]);
+            tiny3d_VertexPos(x1, y1, 1000); tiny3d_VertexColor(bg_col[i + 1][j + 1]);
+            tiny3d_VertexPos(x0, y1, 1000); tiny3d_VertexColor(bg_col[i][j + 1]);
+        }
+    tiny3d_End();
+
+    /* soft glowing ribbon */
+    const float step = 40.0f;
+    float x;
+    tiny3d_SetPolygon(TINY3D_QUADS);
+    for (x = -step; x < SCREEN_W + step; x += step) {
+        float ya = wave_y(x, phase, 14), yb = wave_y(x + step, phase, 14);
+        u32 mid = 0xaad2ff3a, clear = 0xaad2ff00;
+        tiny3d_VertexPos(x, ya - 46, 1000);        tiny3d_VertexColor(clear);
+        tiny3d_VertexPos(x + step, yb - 46, 1000); tiny3d_VertexColor(clear);
+        tiny3d_VertexPos(x + step, yb, 1000);      tiny3d_VertexColor(mid);
+        tiny3d_VertexPos(x, ya, 1000);             tiny3d_VertexColor(mid);
+
+        tiny3d_VertexPos(x, ya, 1000);             tiny3d_VertexColor(mid);
+        tiny3d_VertexPos(x + step, yb, 1000);      tiny3d_VertexColor(mid);
+        tiny3d_VertexPos(x + step, yb + 46, 1000); tiny3d_VertexColor(clear);
+        tiny3d_VertexPos(x, ya + 46, 1000);        tiny3d_VertexColor(clear);
+    }
+    tiny3d_End();
+
+    /* fine lines */
+    for (j = 0; j < 7; j++) {
+        u32 c = RGBA(190, 220, 255, 40 + 10 * (3 - abs(j - 3)));
+        tiny3d_SetPolygon(TINY3D_LINE_STRIP);
+        for (x = -20; x <= SCREEN_W + 20; x += 24) {
+            tiny3d_VertexPos(x, wave_y(x, phase, j * 7.0f), 1000);
+            tiny3d_VertexColor(c);
+        }
+        tiny3d_End();
+    }
+}
+
+/* ------------------------------------------------------------------ text */
+float gfx_text(float x, float y, float size, u32 c, const char *s)
+{
+    SetFontSize((int) size, (int) size);
+    SetFontColor(c, 0x00000000);
+    SetFontAutoCenter(0);
+    return DrawString(x, y, (char *) s);
+}
+
+float gfx_text_w(float size, const char *s)
+{
+    /* measure by drawing far off-screen */
+    SetFontSize((int) size, (int) size);
+    SetFontColor(0x00000000, 0x00000000);
+    SetFontAutoCenter(0);
+    return DrawString(-20000.0f, -20000.0f, (char *) s) + 20000.0f;
+}
+
+void gfx_text_center(float cx, float y, float size, u32 c, const char *s)
+{
+    float w = gfx_text_w(size, s);
+    gfx_text(cx - w / 2.0f, y, size, c, s);
+}
+
+void gfx_text_fit(float x, float y, float size, u32 c, const char *s, float max_w)
+{
+    char buf[256];
+    int n = strlen(s);
+    if (gfx_text_w(size, s) <= max_w) { gfx_text(x, y, size, c, s); return; }
+    if (n > 250) n = 250;
+    while (n > 0) {
+        memcpy(buf, s, n);
+        strcpy(buf + n, "...");
+        if (gfx_text_w(size, buf) <= max_w) break;
+        n--;
+    }
+    gfx_text(x, y, size, c, buf);
+}
