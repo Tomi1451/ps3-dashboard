@@ -31,6 +31,14 @@ void  gfx_image_fit(const Texture *t, float x, float y, float w, float h, u32 ti
 void  gfx_background(float phase);        /* PS3-blue radial gradient + soft wave */
 void  gfx_background_parts(float phase, int parts);  /* 1 gradient, 2 glow, 4 lines */
 
+/* themes (PlayStation colour palette) */
+int         gfx_theme_count(void);
+const char *gfx_theme_name(int i);
+u32         gfx_theme_swatch(int i);
+void        gfx_theme_set(int theme, int brightness /* 0..4 */, int wave);
+u32         gfx_theme_col(int level /* 0 light .. 3 dark */, u32 alpha);
+u32         gfx_accent(u32 alpha);
+
 float gfx_text(float x, float y, float size, u32 rgba, const char *s);
 float gfx_text_w(float size, const char *s);
 void  gfx_text_center(float cx, float y, float size, u32 rgba, const char *s);

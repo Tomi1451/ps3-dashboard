@@ -192,10 +192,58 @@ static u32 lerp_col(u32 a, u32 b, float t)
     return RGBA(ar + (br - ar) * t, ag + (bg - ag) * t, ab + (bb - ab) * t, 255);
 }
 
+/* ------------------------------------------------------------------ themes
+   PlayStation colour palette: the PS3 XMB blue, the four colours of the PlayStation logo,
+   the four face-button colours, and the console finishes. Each is a base colour; the
+   background is a radial gradient from it (bright centre, deep edges). */
+typedef struct { const char *name; u32 c[4]; u32 accent; } Theme;
+#define T4(r, g, b) { RGBA(r, g, b, 255), RGBA((r) * 0.48f, (g) * 0.48f, (b) * 0.48f, 255), \
+                      RGBA((r) * 0.22f, (g) * 0.22f, (b) * 0.22f, 255), RGBA((r) * 0.08f, (g) * 0.08f, (b) * 0.08f, 255) }
+static const Theme themes[] = {
+    { "PS3 Classic Blue",      { 0x2563d9ff, 0x0d3591ff, 0x061a52ff, 0x020a22ff }, 0x9cc8ffff },
+    { "PlayStation Blue",      T4(0x10, 0x4c, 0xb8), 0x8fb6ffff },
+    { "PlayStation Red",       T4(0xc4, 0x14, 0x2a), 0xff9aa6ff },
+    { "PlayStation Yellow",    T4(0xc8, 0x8c, 0x00), 0xffd970ff },
+    { "PlayStation Green",     T4(0x00, 0x96, 0x58), 0x86f0c0ff },
+    { "Triangle Teal",         T4(0x22, 0xa8, 0x92), 0x9ef3e2ff },
+    { "Circle Red",            T4(0xd0, 0x3c, 0x4c), 0xffa8b2ff },
+    { "Cross Blue",            T4(0x4a, 0x7c, 0xd4), 0xb4d0ffff },
+    { "Square Pink",           T4(0xb4, 0x4c, 0xb0), 0xffb4f8ff },
+    { "PS1 Grey",              T4(0x86, 0x88, 0x92), 0xe0e2ecff },
+    { "PS2 Midnight",          T4(0x22, 0x2c, 0x6a), 0xa8b4ffff },
+    { "PS3 Piano Black",       T4(0x3a, 0x3a, 0x40), 0xd0d0d8ff },
+};
+#define THEME_COUNT ((int) (sizeof(themes) / sizeof(themes[0])))
+static int theme = 0, wave_on = 1;
+static float bright = 1.0f;
+
+int         gfx_theme_count(void) { return THEME_COUNT; }
+const char *gfx_theme_name(int i) { return themes[i].name; }
+u32         gfx_theme_swatch(int i) { return themes[i].c[0]; }
+
+static u32 scale_col(u32 c, float k, u32 a)
+{
+    float r = (c >> 24) * k, g = ((c >> 16) & 255) * k, b = ((c >> 8) & 255) * k;
+    return RGBA(r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b, a);
+}
+
+void gfx_theme_set(int t, int brightness, int wave)
+{
+    static const float steps[5] = { 0.55f, 0.75f, 1.0f, 1.18f, 1.35f };
+    theme = (t >= 0 && t < THEME_COUNT) ? t : 0;
+    bright = steps[(brightness >= 0 && brightness < 5) ? brightness : 2];
+    wave_on = wave;
+    bg_ready = 0;
+}
+
+/* level 0 = gradient centre ... 3 = darkest edge; used for panels and the footer */
+u32 gfx_theme_col(int level, u32 alpha) { return scale_col(themes[theme].c[level & 3], level == 3 ? 1.0f : bright, alpha); }
+u32 gfx_accent(u32 alpha) { return (themes[theme].accent & 0xffffff00) | alpha; }
+
 static void bg_prepare(void)
 {
-    /* Classic PS3 blue: bright centre, deep navy edges */
-    const u32 c0 = 0x2563d9ff, c1 = 0x0d3591ff, c2 = 0x061a52ff, c3 = 0x020a22ff;
+    u32 c0 = scale_col(themes[theme].c[0], bright, 255), c1 = scale_col(themes[theme].c[1], bright, 255),
+        c2 = scale_col(themes[theme].c[2], bright, 255), c3 = scale_col(themes[theme].c[3], bright, 255);
     int i, j;
     for (i = 0; i <= GX; i++)
         for (j = 0; j <= GY; j++) {
@@ -241,7 +289,7 @@ void gfx_background_parts(float phase, int parts)
     if (parts & 2) {            /* soft glowing ribbon: one batch per segment */
         for (x = -step; x < SCREEN_W + step; x += step) {
             float ya = wave_y(x, phase, 14), yb = wave_y(x + step, phase, 14);
-            u32 mid = 0xaad2ff3a, clear = 0xaad2ff00;
+            u32 mid = gfx_accent(0x3a), clear = gfx_accent(0);
             tiny3d_SetPolygon(TINY3D_QUADS);
             tiny3d_VertexPos(x, ya - 46, 1000);        tiny3d_VertexColor(clear);
             tiny3d_VertexPos(x + step, yb - 46, 1000); tiny3d_VertexColor(clear);
@@ -258,7 +306,7 @@ void gfx_background_parts(float phase, int parts)
 
     if (parts & 4) {            /* fine lines as thin quads */
         for (j = 0; j < 7; j++) {
-            u32 c = RGBA(190, 220, 255, 40 + 10 * (3 - abs(j - 3)));
+            u32 c = gfx_accent(40 + 10 * (3 - abs(j - 3)));
             tiny3d_SetPolygon(TINY3D_QUADS);
             for (x = -24; x <= SCREEN_W; x += 24) {
                 float ya = wave_y(x, phase, j * 7.0f), yb = wave_y(x + 24, phase, j * 7.0f);
@@ -274,7 +322,7 @@ void gfx_background_parts(float phase, int parts)
 
 void gfx_background(float phase)
 {
-    gfx_background_parts(phase, 7);
+    gfx_background_parts(phase, wave_on ? 7 : 1);
 }
 
 /* ------------------------------------------------------------------ text */

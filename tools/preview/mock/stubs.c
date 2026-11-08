@@ -71,3 +71,9 @@ int disc_poll(DiscInfo *d)
     else strcpy(d->id, d->type == DISC_PS1 ? "SCES-00984" : "SLES-50330");
     return 1;
 }
+#include "../../../source/settings.h"
+#include "../../../source/gfx.h"
+Settings settings = { 0, 2, 1 };
+void settings_apply(void) { gfx_theme_set(settings.theme, settings.brightness, settings.wave); }
+void settings_load(void) { const char *t = getenv("PREVIEW_THEME"); if (t) settings.theme = atoi(t); settings_apply(); }
+void settings_save(void) {}

@@ -18,6 +18,7 @@
 #include "launch.h"
 #include "log.h"
 #include "disc.h"
+#include "settings.h"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -153,6 +154,7 @@ static const float plat_aspect[PLAT_COUNT] = { 1.0f, 0.70f, 0.86f };   /* PS1 je
 static const u32   plat_hue[PLAT_COUNT][2] = { { 0x545862ff, 0x1c1d22ff }, { 0x1d3fb8ff, 0x070d33ff }, { 0x46566eff, 0x10161fff } };
 
 static int plat = PLAT_PS1;
+static int in_settings = 0, set_row = 0;   /* Settings is the 4th tab after PS1 / PS2 / PS3 */
 static int sel[PLAT_COUNT];
 static int top_row[PLAT_COUNT];
 static int mode = 0;            /* 0 grid, 1 info panel, 2 webMAN error, 3 disc inserted */
@@ -163,8 +165,6 @@ static float anim = 0.0f;       /* selection pulse */
 static void draw_placeholder(const Game *g, float x, float y, float w, float h)
 {
     gfx_rect_v(x, y, w, h, plat_hue[g->plat][0], plat_hue[g->plat][1]);
-    gfx_rect(x, y, w, h * 0.09f, 0xffffffe0);
-    gfx_text(x + 8, y + h * 0.015f, h * 0.06f, 0x111827ff, plat_short(g->plat));
     gfx_text_wrap(x + 10, y + h * 0.45f, w > 160 ? 22 : 18, 0xffffffff, g->title, w - 20, 3);
 }
 
@@ -185,7 +185,7 @@ static void draw_cover(const Game *g, float bx, float by, float bw, float bh, in
         float p = 0.5f + 0.5f * sinf(anim);
         int i;
         for (i = 6; i >= 1; i--)
-            gfx_frame(x, y, w, h, i * 5.0f, RGBA(120, 180, 255, (int) ((10 + 10 * p) * (7 - i) / 3)));
+            gfx_frame(x, y, w, h, i * 5.0f, gfx_accent((int) ((10 + 10 * p) * (7 - i) / 3)));
     }
     gfx_rect(x + 6, y + 10, w, h, 0x00000070);      /* drop shadow */
     if (t) gfx_image(t, x, y, w, h, 0xffffffff);
@@ -200,13 +200,20 @@ static void draw_nav(void)
     float x = MARGIN_X;
     int p, total = 0;
     for (p = 0; p < PLAT_COUNT; p++) {
-        int on = p == plat;
+        int on = (p == plat) && !in_settings;
         float size = on ? 46 : 32;
         float w = gfx_text_w(size, labels[p]);
         gfx_text(x, on ? 52 : 64, size, on ? 0xffffffff : 0xffffff90, labels[p]);
-        if (on) gfx_rect(x, 112, w, 4, 0x9cc8ffff);
+        if (on) gfx_rect(x, 112, w, 4, gfx_accent(0xff));
         x += w + 56;
         total += library[p].count;
+    }
+    {   /* Settings tab */
+        int on = in_settings;
+        float size = on ? 46 : 32, w = gfx_text_w(size, "Settings");
+        x += 24;
+        gfx_text(x, on ? 52 : 64, size, on ? 0xffffffff : 0xffffff90, "Settings");
+        if (on) gfx_rect(x, 112, w, 4, gfx_accent(0xff));
     }
     char buf[64];
     snprintf(buf, sizeof(buf), "%d games in your library", total);
@@ -322,10 +329,76 @@ static void draw_info(void)
     gfx_text_wrap(x + 40, ky + 246, 22, 0xffffffd0, g->path, w - 80, 2);
 }
 
+/* ---------------------------------------------------------------- settings */
+#define SET_ROWS 3
+static void set_label(float y, int row, const char *label, const char *value)
+{
+    int on = (set_row == row);
+    if (on) {
+        gfx_rect(MARGIN_X - 24, y - 22, SCREEN_W - 2 * MARGIN_X + 48, 150, 0xffffff12);
+        gfx_frame(MARGIN_X - 24, y - 22, SCREEN_W - 2 * MARGIN_X + 48, 150, 1, 0xffffff40);
+    }
+    gfx_text(MARGIN_X, y, 30, on ? 0xffffffff : 0xffffffb0, label);
+    if (value) gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(26, value), y + 4, 26, on ? 0xffffffff : 0xffffff90, value);
+}
+
+static void draw_settings(void)
+{
+    int i, n = gfx_theme_count();
+    {
+        float x = gfx_text(MARGIN_X, 168, 52, 0xffffffff, "Settings");
+        gfx_text(x, 184, 26, 0xffffff90, "  \xB7  changes apply straight away and are saved for next time");
+    }
+
+    /* background colour: a row of swatches */
+    float y = 320;
+    set_label(y, 0, "Background colour", gfx_theme_name(settings.theme));
+    float sw = 112, sh = 56, gap = (SCREEN_W - 2 * MARGIN_X - n * sw) / (n - 1);
+    for (i = 0; i < n; i++) {
+        float sx = MARGIN_X + i * (sw + gap), sy = y + 56;
+        gfx_rect_v(sx, sy, sw, sh, gfx_theme_swatch(i), (gfx_theme_swatch(i) & 0xffffff00) | 0x60);
+        if (i == settings.theme) gfx_frame(sx - 5, sy - 5, sw + 10, sh + 10, 3, 0xffffffff);
+        else gfx_frame(sx, sy, sw, sh, 1, 0xffffff40);
+    }
+
+    /* brightness: five steps */
+    y = 500;
+    static const char *bnames[5] = { "Darkest", "Darker", "Normal", "Brighter", "Brightest" };
+    set_label(y, 1, "Brightness", bnames[settings.brightness]);
+    for (i = 0; i < 5; i++) {
+        float bx = MARGIN_X + i * 132, by = y + 64;
+        gfx_rect(bx, by, 120, 22, i <= settings.brightness ? gfx_accent(0xe0) : 0xffffff22);
+    }
+
+    /* wave */
+    y = 680;
+    set_label(y, 2, "Wave animation", settings.wave ? "On" : "Off");
+    {
+        float tx = MARGIN_X, ty = y + 62;
+        gfx_rect(tx, ty, 96, 40, settings.wave ? gfx_accent(0xd0) : 0xffffff22);
+        gfx_rect(settings.wave ? tx + 58 : tx + 4, ty + 4, 34, 32, 0xffffffff);
+    }
+
+}
+
+static void settings_input(void)
+{
+    int changed = 0;
+    if (pad_pressed & B_DOWN) set_row = (set_row + 1) % SET_ROWS;
+    if (pad_pressed & B_UP)   set_row = (set_row + SET_ROWS - 1) % SET_ROWS;
+    int d = (pad_pressed & B_RIGHT) ? 1 : (pad_pressed & B_LEFT) ? -1 : 0;
+    if (pad_pressed & B_CROSS) d = 1;
+    if (!d) return;
+    if (set_row == 0) { settings.theme = (settings.theme + d + gfx_theme_count()) % gfx_theme_count(); changed = 1; }
+    if (set_row == 1) { int b = settings.brightness + d; if (b >= 0 && b <= 4) { settings.brightness = b; changed = 1; } }
+    if (set_row == 2) { settings.wave = !settings.wave; changed = 1; }
+    if (changed) { settings_apply(); settings_save(); }
+}
+
 static void draw_message(const char *title, const char *line)
 {
-    gfx_rect(0, 0, SCREEN_W, SCREEN_H, 0x020a22d0);
-    gfx_rect_v(460, 380, 1000, 300, 0x143078f8, 0x061440f8);
+    gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0xd0));
+    gfx_rect_v(460, 380, 1000, 300, gfx_theme_col(1, 0xf8), gfx_theme_col(2, 0xf8));
     gfx_frame(460, 380, 1000, 300, 1, 0xffffff40);
     gfx_text_center(SCREEN_W / 2, 440, 40, 0xffffffff, title);
     gfx_text_wrap(520, 510, 24, 0xffffffd0, line, 880, 4);
@@ -334,8 +407,8 @@ static void draw_message(const char *title, const char *line)
 static void draw_footer_band(void)
 {
     /* covers anything scrolling under the button bar */
-    gfx_rect_v(0, FOOTER_Y - 70, SCREEN_W, 70, 0x020a2200, 0x020a22e6);
-    gfx_rect(0, FOOTER_Y, SCREEN_W, SCREEN_H - FOOTER_Y, 0x020a22e6);
+    gfx_rect_v(0, FOOTER_Y - 70, SCREEN_W, 70, gfx_theme_col(3, 0), gfx_theme_col(3, 0xe6));
+    gfx_rect(0, FOOTER_Y, SCREEN_W, SCREEN_H - FOOTER_Y, gfx_theme_col(3, 0xe6));
     gfx_rect(MARGIN_X, FOOTER_Y + 2, SCREEN_W - 2 * MARGIN_X, 1, 0xffffff22);
 }
 
@@ -343,7 +416,12 @@ static void draw_hints(void)
 {
     float x = MARGIN_X, y = FOOTER_Y + 40;
     draw_footer_band();
-    if (mode == 3) {
+    if (mode == 0 && in_settings) {
+        x = hint_pill(x, y, "UP / DOWN", "Choose");
+        x = hint_pill(x, y, "LEFT / RIGHT", "Change");
+        x = hint_pill(x, y, "L1 / R1", "Switch tab");
+        x = hint_pill(x, y, "START", "Exit");
+    } else if (mode == 3) {
         x = hint(x, y, 'x', "Select");
         x = hint(x, y, 'o', "Not now");
     } else if (mode == 1) {
@@ -355,7 +433,7 @@ static void draw_hints(void)
         x = hint_pill(x, y, "L1 / R1", "Switch console");
         x = hint_pill(x, y, "START", "Exit");
     }
-    { const char *ver = "v0.10"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
+    { const char *ver = "v0.11"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
 }
 
 /* ---------------------------------------------------------------- main */
@@ -376,8 +454,8 @@ static void draw_disc_popup(void)
 {
     char line[200];
     float x = 460, y = 330, w = 1000, h = 420;
-    gfx_rect(0, 0, SCREEN_W, SCREEN_H, 0x020a22d0);
-    gfx_rect_v(x, y, w, h, 0x143078f8, 0x061440f8);
+    gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0xd0));
+    gfx_rect_v(x, y, w, h, gfx_theme_col(1, 0xf8), gfx_theme_col(2, 0xf8));
     gfx_frame(x, y, w, h, 1, 0xffffff40);
     gfx_text(x + 60, y + 44, 20, 0xffffff8c, "DISC INSERTED");
     gfx_text_fit(x + 60, y + 80, 44, 0xffffffff, disc.title[0] ? disc.title : disc_name(disc.type), w - 120);
@@ -435,8 +513,9 @@ s32 main(s32 argc, const char *argv[])
 {
     int i;
     log_reset();
-    log_step("start v0.10");
+    log_step("start v0.11");
     gfx_init();
+    settings_load();
     ioPadInit(7);
     log_step("pads ok");
 
@@ -470,10 +549,16 @@ s32 main(s32 argc, const char *argv[])
             if (pad_pressed & B_CIRCLE) mode = prev_mode;
             else if (pad_pressed & B_CROSS) disc_action();
         } else if (mode == 0) {
-            if (pad_pressed & B_R1) plat = (plat + 1) % PLAT_COUNT;
-            if (pad_pressed & B_L1) plat = (plat + PLAT_COUNT - 1) % PLAT_COUNT;
+            /* tabs: PS1, PS2, PS3, Settings */
+            int tab = in_settings ? PLAT_COUNT : plat;
+            if (pad_pressed & B_R1) tab = (tab + 1) % (PLAT_COUNT + 1);
+            if (pad_pressed & B_L1) tab = (tab + PLAT_COUNT) % (PLAT_COUNT + 1);
+            if (pad_pressed & (B_R1 | B_L1)) { in_settings = (tab == PLAT_COUNT); if (!in_settings) plat = tab; }
             l = &library[plat];
-            if (l->count) {
+            if (in_settings) {
+                if (!(pad_pressed & (B_R1 | B_L1))) settings_input();
+                if (pad_pressed & B_CIRCLE) in_settings = 0;
+            } else if (l->count) {
                 int s = sel[plat];
                 if ((pad_pressed & B_RIGHT) && s + 1 < l->count) s++;
                 if ((pad_pressed & B_LEFT) && s > 0) s--;
@@ -498,7 +583,7 @@ s32 main(s32 argc, const char *argv[])
             draw_info();
         } else {
             draw_nav();
-            draw_grid();
+            if (in_settings) draw_settings(); else draw_grid();
         }
         if (mode == 3) draw_disc_popup();
         draw_hints();
