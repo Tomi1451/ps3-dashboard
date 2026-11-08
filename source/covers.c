@@ -10,6 +10,7 @@
 #include <sysmodule/sysmodule.h>
 
 #include "covers.h"
+#include "log.h"
 
 #define SLOT_DIM   512                 /* max texture size per cover */
 #define SLOTS      56                  /* 56 x 1 MB of video memory */
@@ -132,5 +133,6 @@ const Texture *covers_get(const Game *g)
     s->owner = g;
     s->last_used = frame_no;
     s->state = decode(g->cover, s) ? 1 : 2;
+    { static int fails = 0; if (s->state == 2 && fails++ < 10) log_step("cover failed: %s", g->cover); }
     return s->state == 1 ? &s->tex : NULL;
 }

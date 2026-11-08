@@ -12,6 +12,7 @@
 
 #include "gfx.h"
 #include "dejavusans_ttf_bin.h"
+#include "log.h"
 
 static u8 *tex_mem_ptr;     /* next free byte of RSX texture memory */
 static u8 *tex_mem_end;
@@ -20,12 +21,16 @@ static u8 *tex_mem_end;
 static FT_Library ft_lib;
 static FT_Face    ft_face;
 
+#define FONT_CELL 64
+static short adv[256];        /* advance of each char in FONT_CELL units (same numbers libfont uses) */
+static int   font_ok = 0;
+
 static void ttf_to_bitmap(u8 chr, u8 *bitmap, short *w, short *h, short *y_correction)
 {
     FT_Set_Pixel_Sizes(ft_face, (*w), (*h));
     FT_GlyphSlot slot = ft_face->glyph;
     memset(bitmap, 0, (*w) * (*h));
-    if (FT_Load_Char(ft_face, (unsigned char) chr, FT_LOAD_RENDER)) { (*w) = 0; return; }
+    if (FT_Load_Char(ft_face, (unsigned char) chr, FT_LOAD_RENDER)) { (*w) = 0; adv[chr] = 0; return; }
 
     int n, m, ww = 0;
     *y_correction = (*h) - 1 - slot->bitmap_top;
@@ -39,6 +44,7 @@ static void ttf_to_bitmap(u8 chr, u8 *bitmap, short *w, short *h, short *y_corre
     }
     *w = ((slot->advance.x + 31) >> 6) + ((slot->bitmap_left < 0) ? -slot->bitmap_left : 0);
     *h = slot->bitmap.rows;
+    adv[chr] = *w;
 }
 
 static int load_font(void)
@@ -54,7 +60,8 @@ static int load_font(void)
     int i;
     FT_Init_FreeType(&ft_lib);
     for (i = 0; paths[i]; i++)
-        if (FT_New_Face(ft_lib, paths[i], 0, &ft_face) == 0) return 1;
+        if (FT_New_Face(ft_lib, paths[i], 0, &ft_face) == 0) { log_step("font: %s", paths[i]); return 1; }
+    log_step("font: bundled DejaVu");
     if (FT_New_Memory_Face(ft_lib, (const FT_Byte *) dejavusans_ttf_bin, dejavusans_ttf_bin_size, 0, &ft_face) == 0) return 1;
     return 0;
 }
@@ -62,20 +69,29 @@ static int load_font(void)
 /* ------------------------------------------------------------------ setup */
 void gfx_init(void)
 {
-    tiny3d_Init(1024 * 1024);
+    tiny3d_Init(4 * 1024 * 1024);
+    log_step("tiny3d_Init ok, video %dx%d", Video_Resolution.width, Video_Resolution.height);
 
-    u32 size = 80 * 1024 * 1024;   /* 80 MB for font + cover textures */
+    /* plain blue frame straight away (shows the app started) */
+    tiny3d_Clear(0xff0d3591, TINY3D_CLEAR_ALL);
+    tiny3d_Flip();
+
+    u32 size = 72 * 1024 * 1024;   /* font + cover textures */
     u8 *mem = (u8 *) tiny3d_AllocTexture(size);
-    if (!mem) exit(0);
+    if (!mem) { log_step("texture alloc FAILED"); exit(0); }
+    log_step("texture memory ok");
     tex_mem_ptr = mem;
     tex_mem_end = mem + size;
 
     ResetFont();
+    memset(adv, 0, sizeof(adv));
     if (load_font()) {
-        tex_mem_ptr = AddFontFromTTF(tex_mem_ptr, 32, 255, 64, 64, ttf_to_bitmap);
+        tex_mem_ptr = AddFontFromTTF(tex_mem_ptr, 32, 255, FONT_CELL, FONT_CELL, ttf_to_bitmap);
         FT_Done_Face(ft_face);
+        font_ok = 1;
     }
     FT_Done_FreeType(ft_lib);
+    log_step("font %s", font_ok ? "ok" : "FAILED");
 
     /* virtual 1920x1080 screen at any output resolution */
     float sx = (float) Video_Resolution.width, sy = (float) Video_Resolution.height;
@@ -242,27 +258,28 @@ void gfx_background(float phase)
 }
 
 /* ------------------------------------------------------------------ text */
+/* Width the same way libfont advances: integer (size * adv / cell) per character. */
+float gfx_text_w(float size, const char *s)
+{
+    int sx = (int) size, w = 0;
+    const unsigned char *p = (const unsigned char *) s;
+    while (*p) w += sx * adv[*p++] / FONT_CELL;
+    return (float) w;
+}
+
 float gfx_text(float x, float y, float size, u32 c, const char *s)
 {
+    if (!font_ok) return x;
     SetFontSize((int) size, (int) size);
     SetFontColor(c, 0x00000000);
     SetFontAutoCenter(0);
+    SetFontAutoNewLine(0);
     return DrawString(x, y, (char *) s);
-}
-
-float gfx_text_w(float size, const char *s)
-{
-    /* measure by drawing far off-screen */
-    SetFontSize((int) size, (int) size);
-    SetFontColor(0x00000000, 0x00000000);
-    SetFontAutoCenter(0);
-    return DrawString(-20000.0f, -20000.0f, (char *) s) + 20000.0f;
 }
 
 void gfx_text_center(float cx, float y, float size, u32 c, const char *s)
 {
-    float w = gfx_text_w(size, s);
-    gfx_text(cx - w / 2.0f, y, size, c, s);
+    gfx_text(cx - gfx_text_w(size, s) / 2.0f, y, size, c, s);
 }
 
 void gfx_text_fit(float x, float y, float size, u32 c, const char *s, float max_w)
@@ -271,11 +288,38 @@ void gfx_text_fit(float x, float y, float size, u32 c, const char *s, float max_
     int n = strlen(s);
     if (gfx_text_w(size, s) <= max_w) { gfx_text(x, y, size, c, s); return; }
     if (n > 250) n = 250;
-    while (n > 0) {
-        memcpy(buf, s, n);
-        strcpy(buf + n, "...");
-        if (gfx_text_w(size, buf) <= max_w) break;
-        n--;
-    }
+    float dots = gfx_text_w(size, "...");
+    memcpy(buf, s, n); buf[n] = 0;
+    while (n > 0 && gfx_text_w(size, buf) + dots > max_w) buf[--n] = 0;
+    strcpy(buf + n, "...");
     gfx_text(x, y, size, c, buf);
+}
+
+/* word-wrap inside max_w, at most max_lines lines (last one gets "...") */
+float gfx_text_wrap(float x, float y, float size, u32 c, const char *s, float max_w, int max_lines)
+{
+    char line[256];
+    const char *p = s;
+    float lh = size * 1.18f;
+    int lines = 0;
+    while (*p && lines < max_lines) {
+        while (*p == ' ') p++;
+        int len = 0, last_space = -1;
+        while (p[len] && len < 250) {
+            memcpy(line, p, len + 1); line[len + 1] = 0;
+            if (gfx_text_w(size, line) > max_w) break;
+            if (p[len] == ' ') last_space = len;
+            len++;
+        }
+        int take = len;
+        if (p[len] && last_space > 0) take = last_space;      /* break at a space */
+        if (take == 0) take = 1;
+        memcpy(line, p, take); line[take] = 0;
+        lines++;
+        if (lines == max_lines && p[take]) gfx_text_fit(x, y, size, c, p, max_w);
+        else gfx_text(x, y, size, c, line);
+        p += take;
+        y += lh;
+    }
+    return y;
 }

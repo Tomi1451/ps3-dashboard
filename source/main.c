@@ -16,6 +16,7 @@
 #include "library.h"
 #include "covers.h"
 #include "launch.h"
+#include "log.h"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -158,9 +159,7 @@ static void draw_placeholder(const Game *g, float x, float y, float w, float h)
     gfx_rect_v(x, y, w, h, plat_hue[g->plat][0], plat_hue[g->plat][1]);
     gfx_rect(x, y, w, h * 0.09f, 0xffffffe0);
     gfx_text(x + 8, y + h * 0.015f, h * 0.06f, 0x111827ff, plat_short(g->plat));
-    SetFontAutoNewLine((int) (w - 16));
-    gfx_text(x + 10, y + h * 0.55f, w > 160 ? 22 : 18, 0xffffffff, g->title);
-    SetFontAutoNewLine(0);
+    gfx_text_wrap(x + 10, y + h * 0.45f, w > 160 ? 22 : 18, 0xffffffff, g->title, w - 20, 3);
 }
 
 /* draws a cover (or placeholder) sitting on its shelf line at the bottom of the box */
@@ -275,9 +274,7 @@ static void draw_info(void)
     float x = 260 + cw + 70, y = 230;
     gfx_rect(x, y, gfx_text_w(18, plat_name(g->plat)) + 28, 34, 0xffffff26);
     gfx_text(x + 14, y + 7, 18, 0xffffffff, plat_name(g->plat));
-    SetFontAutoNewLine((int) (1660 - x));
-    gfx_text(x, y + 60, 56, 0xffffffff, g->title);
-    SetFontAutoNewLine(0);
+    gfx_text_wrap(x, y + 60, 56, 0xffffffff, g->title, 1660 - x, 2);
 
     y = 520;
     gfx_text(x, y, 18, 0xffffff90, "FORMAT");          gfx_text(x, y + 26, 26, 0xffffffff, format_name(g->format));
@@ -302,9 +299,7 @@ static void draw_message(const char *title, const char *line)
     gfx_rect_v(460, 380, 1000, 300, 0x143078f8, 0x061440f8);
     gfx_frame(460, 380, 1000, 300, 1, 0xffffff40);
     gfx_text_center(SCREEN_W / 2, 440, 40, 0xffffffff, title);
-    SetFontAutoNewLine(880);
-    gfx_text(520, 510, 24, 0xffffffd0, line);
-    SetFontAutoNewLine(0);
+    gfx_text_wrap(520, 510, 24, 0xffffffd0, line, 880, 4);
 }
 
 static void draw_hints(void)
@@ -314,7 +309,8 @@ static void draw_hints(void)
     x = hint(x, y, 'x', "Play");
     x = hint(x, y, 't', "Game info");
     x = hint_pill(x, y, "L1 / R1", "Switch console");
-    hint_pill(x, y, "START", "Exit");
+    x = hint_pill(x, y, "START", "Exit");
+    gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, "v0.2"), y + 8, 18, 0xffffff60, "v0.2");
 }
 
 /* ---------------------------------------------------------------- main */
@@ -323,25 +319,38 @@ static void start_game(const Game *g)
     char line[200];
     snprintf(line, sizeof(line), "Starting %s ...", g->title);
     gfx_begin(); gfx_background(anim * 0.2f); draw_message("Loading game", line); gfx_end();
-    if (launch_game(g)) exit(0);        /* webMAN mounts and starts the game after we exit */
+    log_step("launch: %s", g->path);
+    if (launch_game(g)) { log_step("webMAN accepted"); exit(0); }
+    log_step("webMAN not reachable");        /* webMAN mounts and starts the game after we exit */
     mode = 2;
 }
 
 s32 main(s32 argc, const char *argv[])
 {
     int i;
+    log_reset();
+    log_step("start");
     gfx_init();
     ioPadInit(7);
+    log_step("pads ok");
 
-    gfx_begin(); gfx_background(0); gfx_text_center(SCREEN_W / 2, 500, 36, 0xffffffe0, "Loading your library..."); gfx_end();
+    for (i = 0; i < 2; i++) {   /* both buffers */
+        gfx_begin(); gfx_background(0); gfx_text_center(SCREEN_W / 2, 500, 36, 0xffffffe0, "Loading your library..."); gfx_end();
+    }
+    log_step("first frame drawn");
 
     covers_init();
+    log_step("covers ok");
     library_scan();
+    log_step("library: PS1 %d, PS2 %d, PS3 %d", library[0].count, library[1].count, library[2].count);
     for (i = 0; i < PLAT_COUNT; i++) { sel[i] = 0; top_row[i] = 0; }
     /* open on the first console that has games */
     for (i = 0; i < PLAT_COUNT; i++) if (library[i].count) { plat = i; break; }
 
+    int frames = 0;
     while (1) {
+        if (frames == 1) log_step("main loop running");
+        if (++frames % 600 == 0) log_step("still running, frame %d", frames);
         read_pads();
         covers_frame();
         anim += 0.06f;
