@@ -29,6 +29,7 @@ void  gfx_image(const Texture *t, float x, float y, float w, float h, u32 tint);
 void  gfx_image_fit(const Texture *t, float x, float y, float w, float h, u32 tint); /* keeps aspect, no stretching */
 
 void  gfx_background(float phase);        /* PS3-blue radial gradient + soft wave */
+void  gfx_background_parts(float phase, int parts);  /* 1 gradient, 2 glow, 4 lines */
 
 float gfx_text(float x, float y, float size, u32 rgba, const char *s);
 float gfx_text_w(float size, const char *s);

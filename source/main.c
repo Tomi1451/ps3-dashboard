@@ -69,28 +69,30 @@ static void read_pads(void)
 static void circle_fill(float cx, float cy, float r, u32 c)
 {
     int i;
-    tiny3d_SetPolygon(TINY3D_POLYGON);
+    tiny3d_SetPolygon(TINY3D_QUADS);
     for (i = 0; i < 24; i++) {
-        float a = i * 6.2831853f / 24.0f;
-        tiny3d_VertexPos(cx + r * cosf(a), cy + r * sinf(a), 1000);
-        tiny3d_VertexColor(c);
+        float a0 = i * 6.2831853f / 24.0f, a1 = (i + 1) * 6.2831853f / 24.0f;
+        tiny3d_VertexPos(cx, cy, 1000);                               tiny3d_VertexColor(c);
+        tiny3d_VertexPos(cx + r * cosf(a0), cy + r * sinf(a0), 1000); tiny3d_VertexColor(c);
+        tiny3d_VertexPos(cx + r * cosf(a1), cy + r * sinf(a1), 1000); tiny3d_VertexColor(c);
+        tiny3d_VertexPos(cx, cy, 1000);                               tiny3d_VertexColor(c);
     }
     tiny3d_End();
 }
 
 static void ring(float cx, float cy, float r, u32 c)
 {
-    int i, k;
-    for (k = 0; k < 3; k++) {
-        float rr = r - 0.7f * k;
-        tiny3d_SetPolygon(TINY3D_LINE_STRIP);
-        for (i = 0; i <= 24; i++) {
-            float a = i * 6.2831853f / 24.0f;
-            tiny3d_VertexPos(cx + rr * cosf(a), cy + rr * sinf(a), 1000);
-            tiny3d_VertexColor(c);
-        }
-        tiny3d_End();
+    int i;
+    const float t = 2.0f;
+    tiny3d_SetPolygon(TINY3D_QUADS);
+    for (i = 0; i < 24; i++) {
+        float a0 = i * 6.2831853f / 24.0f, a1 = (i + 1) * 6.2831853f / 24.0f;
+        tiny3d_VertexPos(cx + r * cosf(a0), cy + r * sinf(a0), 1000);             tiny3d_VertexColor(c);
+        tiny3d_VertexPos(cx + r * cosf(a1), cy + r * sinf(a1), 1000);             tiny3d_VertexColor(c);
+        tiny3d_VertexPos(cx + (r - t) * cosf(a1), cy + (r - t) * sinf(a1), 1000); tiny3d_VertexColor(c);
+        tiny3d_VertexPos(cx + (r - t) * cosf(a0), cy + (r - t) * sinf(a0), 1000); tiny3d_VertexColor(c);
     }
+    tiny3d_End();
 }
 
 static void thick_line(float x0, float y0, float x1, float y1, float t, u32 c)
@@ -310,7 +312,7 @@ static void draw_hints(void)
     x = hint(x, y, 't', "Game info");
     x = hint_pill(x, y, "L1 / R1", "Switch console");
     x = hint_pill(x, y, "START", "Exit");
-    gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, "v0.2"), y + 8, 18, 0xffffff60, "v0.2");
+    gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, "v0.3"), y + 8, 18, 0xffffff60, "v0.3");
 }
 
 /* ---------------------------------------------------------------- main */
@@ -334,8 +336,22 @@ s32 main(s32 argc, const char *argv[])
     ioPadInit(7);
     log_step("pads ok");
 
-    for (i = 0; i < 2; i++) {   /* both buffers */
-        gfx_begin(); gfx_background(0); gfx_text_center(SCREEN_W / 2, 500, 36, 0xffffffe0, "Loading your library..."); gfx_end();
+    /* diagnostic start-up: each piece on its own, logged before and after */
+    {
+        static const char *names[] = { "clear only", "gradient", "gradient+glow", "gradient+glow+lines", "full + text" };
+        static const int parts[] = { 0, 1, 3, 7, 7 };
+        int st, k;
+        for (st = 0; st < 5; st++) {
+            log_step("stage %d (%s) drawing", st + 1, names[st]);
+            for (k = 0; k < 40; k++) {          /* ~2/3 second each */
+                gfx_begin();
+                if (parts[st]) gfx_background_parts(0, parts[st]);
+                if (st == 4) gfx_text_center(SCREEN_W / 2, 500, 36, 0xffffffe0, "Loading your library...");
+                gfx_end();
+                if (k == 0) log_step("stage %d first flip done", st + 1);
+            }
+            log_step("stage %d ok", st + 1);
+        }
     }
     log_step("first frame drawn");
 

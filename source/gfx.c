@@ -14,6 +14,13 @@
 #include "dejavusans_ttf_bin.h"
 #include "log.h"
 
+/* Tiny3D calls this (weak symbol) when something goes wrong inside it */
+void tiny3d_alarm(int leds)
+{
+    static int n = 0;
+    if (n++ < 20) log_step("TINY3D ALARM %d", leds);
+}
+
 static u8 *tex_mem_ptr;     /* next free byte of RSX texture memory */
 static u8 *tex_mem_end;
 
@@ -209,52 +216,65 @@ static float wave_y(float x, float phase, float off)
     return 770.0f + off + 62.0f * sinf(x * 0.0029f + phase) + 26.0f * sinf(x * 0.0012f - phase * 0.7f + off * 0.05f);
 }
 
-void gfx_background(float phase)
+void gfx_background_parts(float phase, int parts)
 {
     int i, j;
     if (!bg_ready) bg_prepare();
 
-    tiny3d_SetPolygon(TINY3D_QUADS);
-    for (i = 0; i < GX; i++)
+    if (parts & 1) {            /* gradient: one small batch per row */
         for (j = 0; j < GY; j++) {
-            float x0 = SCREEN_W * i / GX, x1 = SCREEN_W * (i + 1) / GX;
-            float y0 = SCREEN_H * j / GY, y1 = SCREEN_H * (j + 1) / GY;
-            tiny3d_VertexPos(x0, y0, 1000); tiny3d_VertexColor(bg_col[i][j]);
-            tiny3d_VertexPos(x1, y0, 1000); tiny3d_VertexColor(bg_col[i + 1][j]);
-            tiny3d_VertexPos(x1, y1, 1000); tiny3d_VertexColor(bg_col[i + 1][j + 1]);
-            tiny3d_VertexPos(x0, y1, 1000); tiny3d_VertexColor(bg_col[i][j + 1]);
+            tiny3d_SetPolygon(TINY3D_QUADS);
+            for (i = 0; i < GX; i++) {
+                float x0 = SCREEN_W * i / GX, x1 = SCREEN_W * (i + 1) / GX;
+                float y0 = SCREEN_H * j / GY, y1 = SCREEN_H * (j + 1) / GY;
+                tiny3d_VertexPos(x0, y0, 1000); tiny3d_VertexColor(bg_col[i][j]);
+                tiny3d_VertexPos(x1, y0, 1000); tiny3d_VertexColor(bg_col[i + 1][j]);
+                tiny3d_VertexPos(x1, y1, 1000); tiny3d_VertexColor(bg_col[i + 1][j + 1]);
+                tiny3d_VertexPos(x0, y1, 1000); tiny3d_VertexColor(bg_col[i][j + 1]);
+            }
+            tiny3d_End();
         }
-    tiny3d_End();
+    }
 
-    /* soft glowing ribbon */
     const float step = 40.0f;
     float x;
-    tiny3d_SetPolygon(TINY3D_QUADS);
-    for (x = -step; x < SCREEN_W + step; x += step) {
-        float ya = wave_y(x, phase, 14), yb = wave_y(x + step, phase, 14);
-        u32 mid = 0xaad2ff3a, clear = 0xaad2ff00;
-        tiny3d_VertexPos(x, ya - 46, 1000);        tiny3d_VertexColor(clear);
-        tiny3d_VertexPos(x + step, yb - 46, 1000); tiny3d_VertexColor(clear);
-        tiny3d_VertexPos(x + step, yb, 1000);      tiny3d_VertexColor(mid);
-        tiny3d_VertexPos(x, ya, 1000);             tiny3d_VertexColor(mid);
+    if (parts & 2) {            /* soft glowing ribbon: one batch per segment */
+        for (x = -step; x < SCREEN_W + step; x += step) {
+            float ya = wave_y(x, phase, 14), yb = wave_y(x + step, phase, 14);
+            u32 mid = 0xaad2ff3a, clear = 0xaad2ff00;
+            tiny3d_SetPolygon(TINY3D_QUADS);
+            tiny3d_VertexPos(x, ya - 46, 1000);        tiny3d_VertexColor(clear);
+            tiny3d_VertexPos(x + step, yb - 46, 1000); tiny3d_VertexColor(clear);
+            tiny3d_VertexPos(x + step, yb, 1000);      tiny3d_VertexColor(mid);
+            tiny3d_VertexPos(x, ya, 1000);             tiny3d_VertexColor(mid);
 
-        tiny3d_VertexPos(x, ya, 1000);             tiny3d_VertexColor(mid);
-        tiny3d_VertexPos(x + step, yb, 1000);      tiny3d_VertexColor(mid);
-        tiny3d_VertexPos(x + step, yb + 46, 1000); tiny3d_VertexColor(clear);
-        tiny3d_VertexPos(x, ya + 46, 1000);        tiny3d_VertexColor(clear);
-    }
-    tiny3d_End();
-
-    /* fine lines */
-    for (j = 0; j < 7; j++) {
-        u32 c = RGBA(190, 220, 255, 40 + 10 * (3 - abs(j - 3)));
-        tiny3d_SetPolygon(TINY3D_LINE_STRIP);
-        for (x = -20; x <= SCREEN_W + 20; x += 24) {
-            tiny3d_VertexPos(x, wave_y(x, phase, j * 7.0f), 1000);
-            tiny3d_VertexColor(c);
+            tiny3d_VertexPos(x, ya, 1000);             tiny3d_VertexColor(mid);
+            tiny3d_VertexPos(x + step, yb, 1000);      tiny3d_VertexColor(mid);
+            tiny3d_VertexPos(x + step, yb + 46, 1000); tiny3d_VertexColor(clear);
+            tiny3d_VertexPos(x, ya + 46, 1000);        tiny3d_VertexColor(clear);
+            tiny3d_End();
         }
-        tiny3d_End();
     }
+
+    if (parts & 4) {            /* fine lines as thin quads */
+        for (j = 0; j < 7; j++) {
+            u32 c = RGBA(190, 220, 255, 40 + 10 * (3 - abs(j - 3)));
+            tiny3d_SetPolygon(TINY3D_QUADS);
+            for (x = -24; x <= SCREEN_W; x += 24) {
+                float ya = wave_y(x, phase, j * 7.0f), yb = wave_y(x + 24, phase, j * 7.0f);
+                tiny3d_VertexPos(x, ya, 1000);           tiny3d_VertexColor(c);
+                tiny3d_VertexPos(x + 24, yb, 1000);      tiny3d_VertexColor(c);
+                tiny3d_VertexPos(x + 24, yb + 1.5f, 1000); tiny3d_VertexColor(c);
+                tiny3d_VertexPos(x, ya + 1.5f, 1000);    tiny3d_VertexColor(c);
+            }
+            tiny3d_End();
+        }
+    }
+}
+
+void gfx_background(float phase)
+{
+    gfx_background_parts(phase, 7);
 }
 
 /* ------------------------------------------------------------------ text */
