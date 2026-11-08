@@ -31,6 +31,7 @@ static FT_Face    ft_face;
 #define FONT_CELL 64
 static short adv[256];        /* advance of each char in FONT_CELL units (same numbers libfont uses) */
 static int   font_ok = 0;
+int gfx_font_choice = 0;      /* font to load in gfx_init (set from settings before it) */
 
 static void ttf_to_bitmap(u8 chr, u8 *bitmap, short *w, short *h, short *y_correction)
 {
@@ -54,23 +55,81 @@ static void ttf_to_bitmap(u8 chr, u8 *bitmap, short *w, short *h, short *y_corre
     adv[chr] = *w;
 }
 
-static int load_font(void)
+/* Fonts: the PS3's own system fonts (in flash, so nothing extra to install) plus the
+   bundled DejaVu. Each choice lists the file names used across firmware versions. */
+typedef struct { const char *name; const char *files[3]; } FontChoice;
+static const FontChoice fonts[] = {
+    { "PS3 System (Seurat)",  { "SCE-PS3-SR-R-LATIN2.TTF", "SCE-PS3-SR-R-LATIN.TTF", NULL } },
+    { "Seurat Bold",          { "SCE-PS3-SR-B-LATIN2.TTF", "SCE-PS3-SR-B-LATIN.TTF", NULL } },
+    { "Rodin",                { "SCE-PS3-RD-R-LATIN2.TTF", "SCE-PS3-RD-R-LATIN.TTF", NULL } },
+    { "Rodin Light",          { "SCE-PS3-RD-L-LATIN2.TTF", "SCE-PS3-RD-L-LATIN.TTF", NULL } },
+    { "Rodin Bold",           { "SCE-PS3-RD-B-LATIN2.TTF", "SCE-PS3-RD-B-LATIN.TTF", NULL } },
+    { "New Rodin",            { "SCE-PS3-NR-R-JPN.TTF", "SCE-PS3-NR-R-EXT.TTF", NULL } },
+    { "Matisse (serif)",      { "SCE-PS3-MT-R-LATIN2.TTF", "SCE-PS3-MT-R-LATIN.TTF", NULL } },
+    { "VAG Rounded",          { "SCE-PS3-VR-R-LATIN2.TTF", "SCE-PS3-VR-R-LATIN.TTF", NULL } },
+    { "DejaVu Sans (built in)", { NULL } },
+};
+#define FONT_COUNT ((int) (sizeof(fonts) / sizeof(fonts[0])))
+#define FONT_BUILTIN (FONT_COUNT - 1)
+static int font_cur = -1;
+static signed char font_avail[FONT_COUNT];    /* 0 unknown, 1 yes, -1 no */
+static u8 *font_mem = NULL;
+
+int         gfx_font_count(void) { return FONT_COUNT; }
+const char *gfx_font_name(int i) { return fonts[i].name; }
+int         gfx_font_current(void) { return font_cur; }
+
+/* opens choice i into ft_face; returns 1 if it worked */
+static int open_font(int i)
 {
-    /* PS3 system font first (clean Sony typography), bundled DejaVu as fallback */
-    static const char *paths[] = {
-        "/dev_flash/data/font/SCE-PS3-SR-R-LATIN2.TTF",
-        "/dev_flash/data/font/SCE-PS3-SR-R-LATIN.TTF",
-        "/dev_flash/data/font/SCE-PS3-RD-R-LATIN2.TTF",
-        "/dev_flash/data/font/SCE-PS3-RD-R-LATIN.TTF",
-        NULL
-    };
-    int i;
-    FT_Init_FreeType(&ft_lib);
-    for (i = 0; paths[i]; i++)
-        if (FT_New_Face(ft_lib, paths[i], 0, &ft_face) == 0) { log_step("font: %s", paths[i]); return 1; }
-    log_step("font: bundled DejaVu");
-    if (FT_New_Memory_Face(ft_lib, (const FT_Byte *) dejavusans_ttf_bin, dejavusans_ttf_bin_size, 0, &ft_face) == 0) return 1;
+    char path[160];
+    int k;
+    if (i == FONT_BUILTIN)
+        return FT_New_Memory_Face(ft_lib, (const FT_Byte *) dejavusans_ttf_bin, dejavusans_ttf_bin_size, 0, &ft_face) == 0;
+    for (k = 0; fonts[i].files[k]; k++) {
+        snprintf(path, sizeof(path), "/dev_flash/data/font/%s", fonts[i].files[k]);
+        if (FT_New_Face(ft_lib, path, 0, &ft_face) == 0) return 1;
+    }
     return 0;
+}
+
+int gfx_font_available(int i)
+{
+    if (i < 0 || i >= FONT_COUNT) return 0;
+    if (!font_avail[i]) {
+        FT_Init_FreeType(&ft_lib);
+        font_avail[i] = open_font(i) ? 1 : -1;
+        if (font_avail[i] > 0) FT_Done_Face(ft_face);
+        FT_Done_FreeType(ft_lib);
+    }
+    return font_avail[i] > 0;
+}
+
+/* (re)builds the glyph texture in the same memory every time, so it can change at any moment */
+int gfx_font_set(int want)
+{
+    int i, order[FONT_COUNT + 1], n = 0, got = -1;
+    if (want < 0 || want >= FONT_COUNT) want = 0;
+    if (want == font_cur && font_ok) return font_cur;
+    order[n++] = want;
+    for (i = 0; i < FONT_COUNT; i++) if (i != want) order[n++] = i;   /* fallbacks: system font first, DejaVu last */
+
+    FT_Init_FreeType(&ft_lib);
+    for (i = 0; i < n; i++)
+        if (open_font(order[i])) { got = order[i]; break; }
+    if (got >= 0) {
+        ResetFont();
+        memset(adv, 0, sizeof(adv));
+        u8 *end = AddFontFromTTF(font_mem, 32, 255, FONT_CELL, FONT_CELL, ttf_to_bitmap);
+        FT_Done_Face(ft_face);
+        if (tex_mem_ptr == font_mem) tex_mem_ptr = end;   /* first load reserves the space */
+        font_ok = 1;
+        font_cur = got;
+        font_avail[got] = 1;
+        log_step("font: %s", fonts[got].name);
+    }
+    FT_Done_FreeType(ft_lib);
+    return font_cur;
 }
 
 /* ------------------------------------------------------------------ setup */
@@ -90,14 +149,8 @@ void gfx_init(void)
     tex_mem_ptr = mem;
     tex_mem_end = mem + size;
 
-    ResetFont();
-    memset(adv, 0, sizeof(adv));
-    if (load_font()) {
-        tex_mem_ptr = AddFontFromTTF(tex_mem_ptr, 32, 255, FONT_CELL, FONT_CELL, ttf_to_bitmap);
-        FT_Done_Face(ft_face);
-        font_ok = 1;
-    }
-    FT_Done_FreeType(ft_lib);
+    font_mem = tex_mem_ptr;              /* every font is 224 glyphs of 64x64, so all fit the same space */
+    gfx_font_set(gfx_font_choice);
     log_step("font %s", font_ok ? "ok" : "FAILED");
 
     /* virtual 1920x1080 screen at any output resolution */

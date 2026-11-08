@@ -39,6 +39,14 @@ void        gfx_theme_set(int theme, int brightness /* 0..4 */, int wave);
 u32         gfx_theme_col(int level /* 0 light .. 3 dark */, u32 alpha);
 u32         gfx_accent(u32 alpha);
 
+/* fonts */
+extern int  gfx_font_choice;              /* set before gfx_init */
+int         gfx_font_count(void);
+const char *gfx_font_name(int i);
+int         gfx_font_available(int i);
+int         gfx_font_set(int i);          /* returns the font actually loaded */
+int         gfx_font_current(void);
+
 float gfx_text(float x, float y, float size, u32 rgba, const char *s);
 float gfx_text_w(float size, const char *s);
 void  gfx_text_center(float cx, float y, float size, u32 rgba, const char *s);

@@ -6,6 +6,7 @@
 #include "library.h"
 
 void           covers_init(void);
+void           covers_reset(void);
 void           covers_frame(void);               /* call once per frame (limits loading per frame) */
 const Texture *covers_get(const Game *g);        /* NULL while loading or if there is no cover */
 

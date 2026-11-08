@@ -23,7 +23,7 @@
 /* ---------------------------------------------------------------- input */
 enum {
     B_UP = 1, B_DOWN = 2, B_LEFT = 4, B_RIGHT = 8, B_CROSS = 16, B_CIRCLE = 32,
-    B_TRIANGLE = 64, B_SQUARE = 128, B_L1 = 256, B_R1 = 512, B_START = 1024
+    B_TRIANGLE = 64, B_SQUARE = 128, B_L1 = 256, B_R1 = 512, B_START = 1024, B_SELECT = 2048
 };
 
 static u32 pad_held = 0, pad_pressed = 0;
@@ -53,6 +53,7 @@ static void read_pads(void)
         if (d.BTN_L1)       now |= B_L1;
         if (d.BTN_R1)       now |= B_R1;
         if (d.BTN_START)    now |= B_START;
+        if (d.BTN_SELECT)   now |= B_SELECT;
         break;
     }
     pad_pressed = now & ~prev;
@@ -143,10 +144,14 @@ static float hint_pill(float x, float y, const char *pill, const char *label)
 /* ---------------------------------------------------------------- layout */
 #define MARGIN_X   96.0f
 #define GRID_Y     330.0f
-#define COLS       7
+/* cover size setting: small / medium / large */
+static const int   size_cols[3]  = { 8, 7, 5 };
+static const float size_cover[3] = { 178.0f, 204.0f, 250.0f };
+static const float size_row[3]   = { 266.0f, 292.0f, 330.0f };
+#define COLS       (size_cols[settings.cover_size])
 #define CELL_W     ((SCREEN_W - 2 * MARGIN_X) / COLS)
-#define COVER_H    204.0f
-#define ROW_H      292.0f
+#define COVER_H    (size_cover[settings.cover_size])
+#define ROW_H      (size_row[settings.cover_size])
 #define VIS_ROWS   3
 #define FOOTER_Y   948.0f
 
@@ -154,7 +159,7 @@ static const float plat_aspect[PLAT_COUNT] = { 1.0f, 0.70f, 0.86f };   /* PS1 je
 static const u32   plat_hue[PLAT_COUNT][2] = { { 0x545862ff, 0x1c1d22ff }, { 0x1d3fb8ff, 0x070d33ff }, { 0x46566eff, 0x10161fff } };
 
 static int plat = PLAT_PS1;
-static int in_settings = 0, set_row = 0;   /* Settings is the 4th tab after PS1 / PS2 / PS3 */
+static int show_settings = 0, set_row = 0, set_top = 0;   /* Settings window (SELECT) */
 static int sel[PLAT_COUNT];
 static int top_row[PLAT_COUNT];
 static int mode = 0;            /* 0 grid, 1 info panel, 2 webMAN error, 3 disc inserted */
@@ -200,20 +205,13 @@ static void draw_nav(void)
     float x = MARGIN_X;
     int p, total = 0;
     for (p = 0; p < PLAT_COUNT; p++) {
-        int on = (p == plat) && !in_settings;
+        int on = (p == plat);
         float size = on ? 46 : 32;
         float w = gfx_text_w(size, labels[p]);
         gfx_text(x, on ? 52 : 64, size, on ? 0xffffffff : 0xffffff90, labels[p]);
         if (on) gfx_rect(x, 112, w, 4, gfx_accent(0xff));
         x += w + 56;
         total += library[p].count;
-    }
-    {   /* Settings tab */
-        int on = in_settings;
-        float size = on ? 46 : 32, w = gfx_text_w(size, "Settings");
-        x += 24;
-        gfx_text(x, on ? 52 : 64, size, on ? 0xffffffff : 0xffffff90, "Settings");
-        if (on) gfx_rect(x, 112, w, 4, gfx_accent(0xff));
     }
     char buf[64];
     snprintf(buf, sizeof(buf), "%d games in your library", total);
@@ -247,7 +245,7 @@ static void draw_grid(void)
     const Game *cur = &l->games[sel[plat]];
     {
         char pos[48];
-        snprintf(pos, sizeof(pos), "%d / %d   \xB7   A-Z", sel[plat] + 1, l->count);
+        snprintf(pos, sizeof(pos), "%d / %d   \xB7   %s", sel[plat] + 1, l->count, settings.sort ? "Z-A" : "A-Z");
         gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(22, pos), 196, 22, 0xffffff80, pos);
     }
 
@@ -259,16 +257,16 @@ static void draw_grid(void)
         int r = i / COLS - top_row[plat], c = i % COLS;
         float cx = MARGIN_X + c * CELL_W + (CELL_W - bw) / 2;
         float cy = GRID_Y + r * ROW_H;
-        if (cy > FOOTER_Y - 60) break;
+        if (cy + bh > FOOTER_Y - 10) break;          /* only whole rows above the button bar */
         if (i == sel[plat]) continue;               /* selected drawn last, on top */
         draw_cover(&l->games[i], cx, cy, bw, bh, 0);
-        gfx_text_fit(cx, cy + bh + 16, 19, 0xffffffb0, l->games[i].title, CELL_W - 30);
+        if (settings.titles) gfx_text_fit(cx, cy + bh + 16, 19, 0xffffffb0, l->games[i].title, CELL_W - 30);
     }
     {
         int r = sel[plat] / COLS - top_row[plat], c = sel[plat] % COLS;
         float cx = MARGIN_X + c * CELL_W + (CELL_W - bw) / 2, cy = GRID_Y + r * ROW_H;
         draw_cover(cur, cx, cy, bw, bh, 1);
-        gfx_text_fit(cx, cy + bh + 16, 21, 0xffffffff, cur->title, CELL_W - 30);
+        gfx_text_fit(cx, cy + bh + 16, 21, 0xffffffff, cur->title, CELL_W - 30);   /* the selected game always shows its name */
     }
     /* preload the next row so scrolling shows covers straight away */
     for (i = last; i < last + COLS && i < l->count; i++) covers_get(&l->games[i]);
@@ -329,70 +327,157 @@ static void draw_info(void)
     gfx_text_wrap(x + 40, ky + 246, 22, 0xffffffd0, g->path, w - 80, 2);
 }
 
-/* ---------------------------------------------------------------- settings */
-#define SET_ROWS 3
-static void set_label(float y, int row, const char *label, const char *value)
+/* ---------------------------------------------------------------- settings window */
+enum { S_HEADER, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT };
+static const struct { int id; const char *label; const char *help; } set_items[] = {
+    { S_HEADER, "APPEARANCE", NULL },
+    { S_THEME,  "Background colour", "PlayStation colours: the PS3 XMB blue, the PlayStation logo colours, the face-button colours and the console finishes." },
+    { S_BRIGHT, "Background brightness", "How bright the background is." },
+    { S_WAVE,   "Wave animation", "The moving XMB-style wave along the bottom of the screen." },
+    { S_FONT,   "Font", "The PS3's own system fonts. Fonts your firmware doesn't have are skipped." },
+    { S_HEADER, "LIBRARY", NULL },
+    { S_SIZE,   "Cover size", "Small fits 8 covers a row, Medium 7 and Large 5." },
+    { S_TITLES, "Game names under covers", "The selected game always shows its name." },
+    { S_SORT,   "Sort order", "Order of the games in each library." },
+    { S_OPEN,   "Open on", "Which library is shown when the dashboard starts." },
+    { S_HEADER, "DISCS", NULL },
+    { S_DISC,   "Ask when a disc is inserted", "Shows Play / Install when you put a disc in. Turn off to leave discs to the XMB." },
+    { S_HEADER, "SYSTEM", NULL },
+    { S_RESCAN, "Rescan library", "Press X to look for new games on the HDD (after copying games over FTP)." },
+    { S_RESET,  "Reset all settings", "Press X to put every setting back to how it started." },
+    { S_ABOUT,  "About", "PS Dashboard - games are mounted and started by webMAN MOD." },
+};
+#define SET_COUNT ((int) (sizeof(set_items) / sizeof(set_items[0])))
+
+static void apply_sort(void);
+static void rescan_library(void);
+
+static const char *set_value(int id, char *buf, size_t n)
 {
-    int on = (set_row == row);
-    if (on) {
-        gfx_rect(MARGIN_X - 24, y - 22, SCREEN_W - 2 * MARGIN_X + 48, 150, 0xffffff12);
-        gfx_frame(MARGIN_X - 24, y - 22, SCREEN_W - 2 * MARGIN_X + 48, 150, 1, 0xffffff40);
-    }
-    gfx_text(MARGIN_X, y, 30, on ? 0xffffffff : 0xffffffb0, label);
-    if (value) gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(26, value), y + 4, 26, on ? 0xffffffff : 0xffffff90, value);
-}
-
-static void draw_settings(void)
-{
-    int i, n = gfx_theme_count();
-    {
-        float x = gfx_text(MARGIN_X, 168, 52, 0xffffffff, "Settings");
-        gfx_text(x, 184, 26, 0xffffff90, "  \xB7  changes apply straight away and are saved for next time");
-    }
-
-    /* background colour: a row of swatches */
-    float y = 320;
-    set_label(y, 0, "Background colour", gfx_theme_name(settings.theme));
-    float sw = 112, sh = 56, gap = (SCREEN_W - 2 * MARGIN_X - n * sw) / (n - 1);
-    for (i = 0; i < n; i++) {
-        float sx = MARGIN_X + i * (sw + gap), sy = y + 56;
-        gfx_rect_v(sx, sy, sw, sh, gfx_theme_swatch(i), (gfx_theme_swatch(i) & 0xffffff00) | 0x60);
-        if (i == settings.theme) gfx_frame(sx - 5, sy - 5, sw + 10, sh + 10, 3, 0xffffffff);
-        else gfx_frame(sx, sy, sw, sh, 1, 0xffffff40);
-    }
-
-    /* brightness: five steps */
-    y = 500;
     static const char *bnames[5] = { "Darkest", "Darker", "Normal", "Brighter", "Brightest" };
-    set_label(y, 1, "Brightness", bnames[settings.brightness]);
-    for (i = 0; i < 5; i++) {
-        float bx = MARGIN_X + i * 132, by = y + 64;
-        gfx_rect(bx, by, 120, 22, i <= settings.brightness ? gfx_accent(0xe0) : 0xffffff22);
+    static const char *sizes[3] = { "Small", "Medium", "Large" };
+    static const char *open[4] = { "Last used", "PS1", "PS2", "PS3" };
+    switch (id) {
+        case S_THEME:  return gfx_theme_name(settings.theme);
+        case S_BRIGHT: return bnames[settings.brightness];
+        case S_WAVE:   return settings.wave ? "On" : "Off";
+        case S_FONT:   return gfx_font_name(settings.font);
+        case S_SIZE:   return sizes[settings.cover_size];
+        case S_TITLES: return settings.titles ? "Show" : "Hide";
+        case S_SORT:   return settings.sort ? "Z to A" : "A to Z";
+        case S_OPEN:   return open[settings.open_on];
+        case S_DISC:   return settings.disc_popup ? "On" : "Off";
+        case S_RESCAN: snprintf(buf, n, "%d games", library[0].count + library[1].count + library[2].count); return buf;
+        case S_ABOUT:  return "v0.12";
     }
-
-    /* wave */
-    y = 680;
-    set_label(y, 2, "Wave animation", settings.wave ? "On" : "Off");
-    {
-        float tx = MARGIN_X, ty = y + 62;
-        gfx_rect(tx, ty, 96, 40, settings.wave ? gfx_accent(0xd0) : 0xffffff22);
-        gfx_rect(settings.wave ? tx + 58 : tx + 4, ty + 4, 34, 32, 0xffffffff);
-    }
-
+    return "";
 }
 
-static void settings_input(void)
+static int set_selectable(int i) { return set_items[i].id != S_HEADER && set_items[i].id != S_ABOUT; }
+
+static void draw_settings_window(void)
 {
-    int changed = 0;
-    if (pad_pressed & B_DOWN) set_row = (set_row + 1) % SET_ROWS;
-    if (pad_pressed & B_UP)   set_row = (set_row + SET_ROWS - 1) % SET_ROWS;
-    int d = (pad_pressed & B_RIGHT) ? 1 : (pad_pressed & B_LEFT) ? -1 : 0;
-    if (pad_pressed & B_CROSS) d = 1;
-    if (!d) return;
-    if (set_row == 0) { settings.theme = (settings.theme + d + gfx_theme_count()) % gfx_theme_count(); changed = 1; }
-    if (set_row == 1) { int b = settings.brightness + d; if (b >= 0 && b <= 4) { settings.brightness = b; changed = 1; } }
-    if (set_row == 2) { settings.wave = !settings.wave; changed = 1; }
-    if (changed) { settings_apply(); settings_save(); }
+    char buf[64];
+    float wx = 330, wy = 70, ww = 1260, wh = 860;
+    float list_top = wy + 120, list_bottom = wy + wh - 120;
+    int i, row;
+
+    gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0x90));
+    gfx_rect(wx + 8, wy + 12, ww, wh, 0x00000060);                         /* shadow */
+    gfx_rect_v(wx, wy, ww, wh, gfx_theme_col(1, 0xf4), gfx_theme_col(2, 0xf8));
+    gfx_frame(wx, wy, ww, wh, 1, 0xffffff40);
+    gfx_rect(wx, wy, ww, 4, gfx_accent(0xff));
+    gfx_text(wx + 50, wy + 34, 44, 0xffffffff, "Settings");
+
+    /* list */
+    if (set_row < set_top) set_top = set_row;
+    if (set_top > 0 && set_items[set_top - 1].id == S_HEADER && set_row == set_top) set_top--;   /* keep the section name in view */
+    for (;;) {   /* scroll down until the selected row fits */
+        float yy = list_top;
+        for (i = set_top; i <= set_row; i++) yy += set_items[i].id == S_HEADER ? 54 : 58;
+        if (yy <= list_bottom || set_top >= set_row) break;
+        set_top++;
+    }
+    float y = list_top;
+    int last_drawn = set_top - 1;
+    (void) row;
+    for (i = set_top; i < SET_COUNT; i++) {
+        if (y + (set_items[i].id == S_HEADER ? 54 : 58) > list_bottom) break;
+        last_drawn = i;
+        int id = set_items[i].id, on = (i == set_row);
+        if (id == S_HEADER) {
+            gfx_text(wx + 50, y + 18, 18, gfx_accent(0xe0), set_items[i].label);
+            gfx_rect(wx + 50, y + 46, ww - 100, 1, 0xffffff26);
+            y += 54;
+            continue;
+        }
+        if (on) {
+            gfx_rect(wx + 30, y, ww - 60, 52, 0xffffff26);
+            gfx_frame(wx + 30, y, ww - 60, 52, 1, 0xffffff70);
+        }
+        gfx_text(wx + 50, y + 12, 26, on ? 0xffffffff : 0xffffffc0, set_items[i].label);
+        const char *v = set_value(id, buf, sizeof(buf));
+        int arrows = on && id != S_RESCAN && id != S_RESET;
+        float vx = wx + ww - (arrows ? 96 : 60) - gfx_text_w(26, v);
+        if (arrows) {
+            gfx_text(vx - 40, y + 12, 26, 0xffffffb0, "<");
+            gfx_text(wx + ww - 76, y + 12, 26, 0xffffffb0, ">");
+        }
+        if (id == S_THEME) gfx_rect(vx - 50, y + 14, 34, 24, gfx_theme_swatch(settings.theme));
+        if (id == S_RESCAN || id == S_RESET) {
+            if (on) gfx_text(wx + ww - 60 - gfx_text_w(22, "Press X"), y + 15, 22, 0xffffffd0, "Press X");
+            if (id == S_RESCAN && !on) gfx_text(wx + ww - 60 - gfx_text_w(22, v), y + 15, 22, 0xffffff80, v);
+        } else gfx_text(vx, y + 12, 26, on ? 0xffffffff : 0xffffffa0, v);
+        y += 58;
+    }
+    /* scroll marks */
+    if (set_top > 0) gfx_text(wx + ww - 60 - gfx_text_w(18, "more above"), wy + 52, 18, 0xffffff80, "more above");
+    if (last_drawn < SET_COUNT - 1) gfx_text_center(wx + ww / 2, list_bottom + 2, 18, 0xffffff80, "more below");
+
+    /* help for the selected setting */
+    gfx_rect(wx, wy + wh - 96, ww, 1, 0xffffff26);
+    gfx_text_wrap(wx + 50, wy + wh - 76, 22, 0xffffffc0, set_items[set_row].help ? set_items[set_row].help : "", ww - 100, 2);
+}
+
+static void settings_change(int d, int pressed_x)
+{
+    int id = set_items[set_row].id, n, i;
+    switch (id) {
+        case S_THEME:  n = gfx_theme_count(); settings.theme = (settings.theme + d + n) % n; break;
+        case S_BRIGHT: if (settings.brightness + d < 0 || settings.brightness + d > 4) return; settings.brightness += d; break;
+        case S_WAVE:   settings.wave = !settings.wave; break;
+        case S_FONT:   /* next font the firmware actually has */
+            n = gfx_font_count();
+            for (i = 0, n = gfx_font_count(); i < n; i++) {
+                settings.font = (settings.font + d + n) % n;
+                if (gfx_font_available(settings.font)) break;
+            }
+            break;
+        case S_SIZE:   if (settings.cover_size + d < 0 || settings.cover_size + d > 2) return; settings.cover_size += d; break;
+        case S_TITLES: settings.titles = !settings.titles; break;
+        case S_SORT:   settings.sort = !settings.sort; apply_sort(); break;
+        case S_OPEN:   settings.open_on = (settings.open_on + d + 4) % 4; break;
+        case S_DISC:   settings.disc_popup = !settings.disc_popup; break;
+        case S_RESCAN: if (!pressed_x) return; rescan_library(); return;
+        case S_RESET:
+            if (!pressed_x) return;
+            settings = settings_defaults; apply_sort();
+            break;
+        default: return;
+    }
+    settings_apply();
+    settings_save();
+}
+
+static void settings_window_input(void)
+{
+    int i;
+    if (pad_pressed & (B_SELECT | B_CIRCLE)) { show_settings = 0; return; }
+    if (pad_pressed & B_DOWN) for (i = set_row + 1; i < SET_COUNT; i++) if (set_selectable(i)) { set_row = i; break; }
+    if (pad_pressed & B_UP)   for (i = set_row - 1; i >= 0; i--)        if (set_selectable(i)) { set_row = i; break; }
+    if (pad_pressed & B_RIGHT) settings_change(1, 0);
+    if (pad_pressed & B_LEFT)  settings_change(-1, 0);
+    if (pad_pressed & B_CROSS) settings_change(1, 1);
 }
 
 static void draw_message(const char *title, const char *line)
@@ -416,11 +501,10 @@ static void draw_hints(void)
 {
     float x = MARGIN_X, y = FOOTER_Y + 40;
     draw_footer_band();
-    if (mode == 0 && in_settings) {
+    if (show_settings) {
         x = hint_pill(x, y, "UP / DOWN", "Choose");
         x = hint_pill(x, y, "LEFT / RIGHT", "Change");
-        x = hint_pill(x, y, "L1 / R1", "Switch tab");
-        x = hint_pill(x, y, "START", "Exit");
+        x = hint(x, y, 'o', "Close");
     } else if (mode == 3) {
         x = hint(x, y, 'x', "Select");
         x = hint(x, y, 'o', "Not now");
@@ -431,9 +515,10 @@ static void draw_hints(void)
         x = hint(x, y, 'x', "Play");
         x = hint(x, y, 't', "Game info");
         x = hint_pill(x, y, "L1 / R1", "Switch console");
+        x = hint_pill(x, y, "SELECT", "Settings");
         x = hint_pill(x, y, "START", "Exit");
     }
-    { const char *ver = "v0.11"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
+    { const char *ver = "v0.12"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
 }
 
 /* ---------------------------------------------------------------- main */
@@ -509,13 +594,41 @@ static void disc_action(void)
     mode = 2;
 }
 
+/* the scanner sorts A-Z; Z-A is the same list reversed */
+static int sorted_za = 0;
+static void apply_sort(void)
+{
+    int p, i;
+    if (sorted_za == settings.sort) return;
+    for (p = 0; p < PLAT_COUNT; p++) {
+        GameList *l = &library[p];
+        for (i = 0; i < l->count / 2; i++) { Game t = l->games[i]; l->games[i] = l->games[l->count - 1 - i]; l->games[l->count - 1 - i] = t; }
+        sel[p] = l->count ? l->count - 1 - sel[p] : 0; top_row[p] = 0;
+    }
+    sorted_za = settings.sort;
+    covers_reset();
+}
+
+static void rescan_library(void)
+{
+    int p;
+    gfx_begin(); gfx_background(anim * 0.2f); gfx_text_center(SCREEN_W / 2, 500, 36, 0xffffffe0, "Looking for games..."); gfx_end();
+    covers_reset();
+    library_scan();
+    sorted_za = 0;
+    apply_sort();
+    for (p = 0; p < PLAT_COUNT; p++) { if (sel[p] >= library[p].count) sel[p] = 0; top_row[p] = 0; }
+    log_step("rescan: PS1 %d, PS2 %d, PS3 %d", library[0].count, library[1].count, library[2].count);
+}
+
 s32 main(s32 argc, const char *argv[])
 {
     int i;
     log_reset();
-    log_step("start v0.11");
+    log_step("start v0.12");
+    settings_load();     /* before gfx_init: it picks the font */
     gfx_init();
-    settings_load();
+    settings_apply();
     ioPadInit(7);
     log_step("pads ok");
 
@@ -528,9 +641,12 @@ s32 main(s32 argc, const char *argv[])
     log_step("covers ok");
     library_scan();
     log_step("library: PS1 %d, PS2 %d, PS3 %d", library[0].count, library[1].count, library[2].count);
+    apply_sort();
     for (i = 0; i < PLAT_COUNT; i++) { sel[i] = 0; top_row[i] = 0; }
-    /* open on the first console that has games */
-    for (i = 0; i < PLAT_COUNT; i++) if (library[i].count) { plat = i; break; }
+    /* open on the chosen console; if it has no games, the first one that does */
+    plat = settings.open_on ? settings.open_on - 1 : settings.last_plat;
+    if (!library[plat].count)
+        for (i = 0; i < PLAT_COUNT; i++) if (library[i].count) { plat = i; break; }
 
     int frames = 0;
     while (1) {
@@ -540,7 +656,7 @@ s32 main(s32 argc, const char *argv[])
         covers_frame();
         anim += 0.06f;
 
-        if (mode != 3 && disc_poll(&disc)) { prev_mode = (mode == 2) ? 0 : mode; mode = 3; disc_choice = 0; }
+        if (mode != 3 && !show_settings && disc_poll(&disc) && settings.disc_popup) { prev_mode = (mode == 2) ? 0 : mode; mode = 3; disc_choice = 0; }
 
         GameList *l = &library[plat];
         if (mode == 3) {
@@ -548,17 +664,16 @@ s32 main(s32 argc, const char *argv[])
             if ((pad_pressed & B_RIGHT) && disc_can_install()) disc_choice = 1;
             if (pad_pressed & B_CIRCLE) mode = prev_mode;
             else if (pad_pressed & B_CROSS) disc_action();
+        } else if (show_settings) {
+            settings_window_input();
         } else if (mode == 0) {
-            /* tabs: PS1, PS2, PS3, Settings */
-            int tab = in_settings ? PLAT_COUNT : plat;
-            if (pad_pressed & B_R1) tab = (tab + 1) % (PLAT_COUNT + 1);
-            if (pad_pressed & B_L1) tab = (tab + PLAT_COUNT) % (PLAT_COUNT + 1);
-            if (pad_pressed & (B_R1 | B_L1)) { in_settings = (tab == PLAT_COUNT); if (!in_settings) plat = tab; }
+            int was = plat;
+            if (pad_pressed & B_R1) plat = (plat + 1) % PLAT_COUNT;
+            if (pad_pressed & B_L1) plat = (plat + PLAT_COUNT - 1) % PLAT_COUNT;
+            if (plat != was && settings.open_on == 0) { settings.last_plat = plat; settings_save(); }
+            if (pad_pressed & B_SELECT) { show_settings = 1; if (!set_selectable(set_row)) set_row = 1; }
             l = &library[plat];
-            if (in_settings) {
-                if (!(pad_pressed & (B_R1 | B_L1))) settings_input();
-                if (pad_pressed & B_CIRCLE) in_settings = 0;
-            } else if (l->count) {
+            if (l->count) {
                 int s = sel[plat];
                 if ((pad_pressed & B_RIGHT) && s + 1 < l->count) s++;
                 if ((pad_pressed & B_LEFT) && s > 0) s--;
@@ -583,9 +698,10 @@ s32 main(s32 argc, const char *argv[])
             draw_info();
         } else {
             draw_nav();
-            if (in_settings) draw_settings(); else draw_grid();
+            draw_grid();
         }
         if (mode == 3) draw_disc_popup();
+        if (show_settings) draw_settings_window();
         draw_hints();
         if (mode == 2) draw_message("webMAN MOD isn't responding",
                                     "The dashboard starts games through webMAN MOD. Check it is installed and enabled, then try again.  (Circle to close)");

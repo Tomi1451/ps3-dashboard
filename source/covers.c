@@ -109,6 +109,13 @@ static int decode(const char *path, Slot *s)
     }
 }
 
+/* forget which game owns which texture (after the library is re-sorted or rescanned) */
+void covers_reset(void)
+{
+    int i;
+    for (i = 0; i < SLOTS; i++) { slots[i].owner = NULL; slots[i].state = 0; slots[i].last_used = 0; }
+}
+
 const Texture *covers_get(const Game *g)
 {
     int i, lru = 0;
