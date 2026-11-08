@@ -78,7 +78,11 @@ jobs:
           make -C /tmp/tiny3d/lib install
           make -C /tmp/tiny3d/libfont install
           echo "---- patched callback as compiled ----"
-          ppu-objdump -d /tmp/tiny3d/lib/build/buffer.o | sed -n '/<tiny_rsxContextCallback>:/,/^$/p'
+          obj=$(find /tmp/tiny3d/lib -name 'buffer.o' | head -1); echo "object: $obj"
+          ppu-objdump -d "$obj" | sed -n '/tiny_rsxContextCallback/,/^$/p' | head -60
+          echo "---- original callback as compiled (for comparison) ----"
+          git -C /tmp/tiny3d show HEAD:lib/source/buffer.c > /tmp/orig_buffer.c
+          ppu-gcc -O2 -mcpu=cell -fgnu89-inline -I/tmp/tiny3d/lib/source -I/tmp/tiny3d/lib/include -I$PSL1GHT/ppu/include -I$PS3DEV/portlibs/ppu/include -c /tmp/orig_buffer.c -o /tmp/orig_buffer.o && ppu-objdump -d /tmp/orig_buffer.o | sed -n '/tiny_rsxContextCallback/,/^$/p' | head -60 || true
 
       - name: Build dashboard PKG
         run: |
