@@ -65,8 +65,7 @@ jobs:
             assets=$(gh api repos/ps3dev/ps3toolchain/releases --jq '[.[] | select(.prerelease and (.draft|not))] | sort_by(.published_at) | reverse | .[0].assets[] | "\(.name) \(.browser_download_url)"')
           fi
           echo "$assets"
-          url=$(echo "$assets" | grep -i linux | grep -i 'x64\|amd64\|x86_64' | grep 'tar' | head -1 | cut -d' ' -f2)
-          [ -n "$url" ] || url=$(echo "$assets" | grep -i linux | grep tar | head -1 | cut -d' ' -f2)
+          url=$(echo "$assets" | grep -i 'linux\|ubuntu' | grep -iv 'arm\|aarch' | grep 'tar' | head -1 | cut -d' ' -f2)
           echo "Toolchain: $url"; test -n "$url"
           curl -sL "$url" | tar xz -C "$GITHUB_WORKSPACE"
           ls "$PS3DEV"; ppu-gcc --version | head -1; ppu-ld --version | head -1
@@ -93,7 +92,7 @@ jobs:
             assets=$(gh api repos/ps3dev/ps3libraries/releases --jq '[.[] | select(.prerelease and (.draft|not))] | sort_by(.published_at) | reverse | .[0].assets[] | "\(.name) \(.browser_download_url)"')
           fi
           echo "$assets"
-          url=$(echo "$assets" | grep -i linux | grep -i 'x64\|amd64\|x86_64' | grep tar | head -1 | cut -d' ' -f2)
+          url=$(echo "$assets" | grep -i 'linux\|ubuntu' | grep -iv 'arm\|aarch' | grep tar | head -1 | cut -d' ' -f2)
           echo "Libraries: $url"; test -n "$url"
           curl -sL "$url" | tar xz -C "$PSL1GHT"
           ls "$PSL1GHT/portlibs/ppu/lib" | grep -i "freetype\|tiny3d\|font3d"
