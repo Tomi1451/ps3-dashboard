@@ -349,14 +349,14 @@ static void draw_hints(void)
         x = hint_pill(x, y, "L1 / R1", "Switch console");
         x = hint_pill(x, y, "START", "Exit");
     }
-    { const char *ver = "v0.8"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
+    { const char *ver = "v0.9"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
 }
 
 /* ---------------------------------------------------------------- main */
 static void start_game(const Game *g)
 {
     char line[200];
-    snprintf(line, sizeof(line), "Starting %s ...  The game will open by itself in a few seconds.", g->title);
+    snprintf(line, sizeof(line), "Starting %s ...  It opens by itself once the XMB has loaded - don't press any buttons.", g->title);
     gfx_begin(); gfx_background(anim * 0.2f); draw_message("Loading game", line); gfx_end();
     log_step("launch: %s", g->path);
     if (launch_game(g)) { log_step("webMAN accepted"); exit(0); }
@@ -368,7 +368,7 @@ s32 main(s32 argc, const char *argv[])
 {
     int i;
     log_reset();
-    log_step("start v0.8");
+    log_step("start v0.9");
     gfx_init();
     ioPadInit(7);
     log_step("pads ok");

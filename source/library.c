@@ -9,6 +9,7 @@
 #include <sys/file.h>
 
 #include "library.h"
+#include "log.h"
 
 #define MM_COVERS "/dev_hdd0/game/BLES80608/USRDIR/covers"
 #define S_ISDIR_PS3(m) (((m) & 0170000) == 0040000)
@@ -148,19 +149,23 @@ static void read_sfo(const char *path, char *title, size_t tn, char *id, size_t 
 /* ---------------------------------------------------------------- scanners */
 typedef void (*entry_fn)(const char *dir, const char *name, int isdir, void *ctx);
 
+typedef struct { int plat; int depth; } IsoCtx_any;
 static void list_dir(const char *dir, entry_fn fn, void *ctx)
 {
     s32 fd;
     sysFSDirent ent;
     u64 read;
     char full[512];
-    if (sysLv2FsOpenDir(dir, &fd) != 0) return;
+    int n = 0;
+    if (sysLv2FsOpenDir(dir, &fd) != 0) { if (!ctx || ((IsoCtx_any *) ctx)->depth == 0) log_step("scan %s: folder not found", dir); return; }
     while (sysLv2FsReadDir(fd, &ent, &read) == 0 && read > 0) {
         if (ent.d_name[0] == '.') continue;
+        n++;
         snprintf(full, sizeof(full), "%s/%s", dir, ent.d_name);
         fn(dir, ent.d_name, is_dir(full), ctx);
     }
     sysLv2FsCloseDir(fd);
+    if (!ctx || ((IsoCtx_any *) ctx)->depth == 0) log_step("scan %s: %d entries", dir, n);
 }
 
 /* PS3 folder games: /dev_hdd0/GAMES/<name>/PS3_GAME */

@@ -37,8 +37,13 @@ int launch_game(const Game *g)
     if (!net_ready) { int r = netInitialize(); log_step("netInitialize = %d", r); net_ready = 1; }
 
     url_encode(enc, sizeof(enc), g->path);
-    /* /play.ps3<path> = mount the game and start it from the disc icon (webMAN waits for us to exit) */
-    snprintf(req, sizeof(req), "GET /play.ps3%s HTTP/1.0\r\n\r\n", enc);
+    /* webMAN multi-command (commands chained with ";"), run by webMAN after we exit:
+       1. /wait.ps3?xmb  - wait until the XMB has fully reloaded (explore_plugin is back)
+       2. /wait.ps3?2    - give it 2 more seconds to settle
+       3. /play.ps3<path> - mount the game and start it from the disc icon
+       A single /play.ps3 sent while we are still running only mounts: webMAN checks for the
+       XMB once, right as we close, while the XMB is still loading - so it skips the start. */
+    snprintf(req, sizeof(req), "GET /wait.ps3?xmb;/wait.ps3?2;/play.ps3%s HTTP/1.0\r\n\r\n", enc);
 
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
@@ -51,9 +56,9 @@ int launch_game(const Game *g)
     log_step("sent: %s", req);
     send(s, req, strlen(req), 0);
 
-    /* webMAN answers once the game is mounted - wait for that (max ~8 s) */
+    /* webMAN only answers after the whole chain has run (after we exit), so don't wait for it */
     {
-        struct timeval tv = { 8, 0 };
+        struct timeval tv = { 1, 0 };
         char buf[512];
         int got, total = 0;
         setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
