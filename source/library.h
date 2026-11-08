@@ -12,6 +12,7 @@ typedef struct {
     char id[16];          /* PS3 TITLE_ID when known */
     char path[400];       /* what webMAN mounts */
     char cover[400];      /* best cover image found ("" = none) */
+    char region[12];      /* "PAL", "NTSC-U", "NTSC-J" or "" */
     u8   plat;
     u8   format;
 } Game;

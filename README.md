@@ -18,3 +18,8 @@ Download `PS_Dashboard.pkg` from the **Releases → latest** page, copy it to a 
 GitHub Actions builds the PKG on every push (`.github/workflows/build.yml`) with the ps3dev toolchain, PSL1GHT and ps3libraries (Tiny3D, FreeType).
 
 Fonts: uses the PS3's own system font; falls back to the bundled DejaVu Sans (see `data/DEJAVU-LICENSE.txt`).
+
+## Previewing the UI on a PC
+`tools/preview/preview.sh "<buttons>" "<frames>"` compiles the real UI code against PC stand-ins for Tiny3D/libfont and renders frames to PNG (needs gcc, FreeType, Python + Pillow + numpy). Buttons, one per frame: `U D L R X O T S [ ]`, `.` = none. Example: `tools/preview/preview.sh "....RR....T" "5,15"`.
+
+Note: the PKG must be built with the June 2026 toolchain (GCC 7.2). The newer nightly (GCC 13 + binutils 2.42) hangs the RSX on real hardware.

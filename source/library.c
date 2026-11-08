@@ -86,6 +86,25 @@ static void tidy_title(char *dst, const char *src, size_t n)
     dst[n - 1] = 0;
 }
 
+/* region from a game ID (SLES/BLUS/...) or from words in the file name */
+static void detect_region(Game *g, const char *name)
+{
+    const char *id = g->id;
+    char up[300]; size_t i;
+    if (id[0]) {
+        char r = id[2];                     /* 3rd letter: E = Europe, U = USA, J/P = Japan */
+        if (id[0] == 'B' || id[0] == 'N') r = id[2];
+        if (r == 'E') { strcpy(g->region, "PAL"); return; }
+        if (r == 'U') { strcpy(g->region, "NTSC-U"); return; }
+        if (r == 'J' || r == 'P') { strcpy(g->region, "NTSC-J"); return; }
+    }
+    for (i = 0; name[i] && i < sizeof(up) - 1; i++) up[i] = toupper((unsigned char) name[i]);
+    up[i] = 0;
+    if (strstr(up, "PAL") || strstr(up, "EUROPE") || strstr(up, "(E)") || strstr(up, "SLES") || strstr(up, "SCES")) strcpy(g->region, "PAL");
+    else if (strstr(up, "NTSC-J") || strstr(up, "JAPAN") || strstr(up, "(J)") || strstr(up, "SLPS") || strstr(up, "SCPS")) strcpy(g->region, "NTSC-J");
+    else if (strstr(up, "NTSC") || strstr(up, "USA") || strstr(up, "(U)") || strstr(up, "SLUS") || strstr(up, "SCUS")) strcpy(g->region, "NTSC-U");
+}
+
 /* look for "<base>.JPG/.jpg/.PNG/.png" */
 static int find_image(char *out, size_t n, const char *base)
 {
@@ -157,6 +176,7 @@ static void on_ps3_folder(const char *dir, const char *name, int isdir, void *ct
     snprintf(g->path, sizeof(g->path), "%s/%s", dir, name);
     read_sfo(sfo, g->title, sizeof(g->title), g->id, sizeof(g->id));
     if (!g->title[0]) tidy_title(g->title, name, sizeof(g->title));
+    detect_region(g, name);
     if (g->id[0]) { snprintf(base, sizeof(base), MM_COVERS "/%s", g->id); find_image(g->cover, sizeof(g->cover), base); }
     if (!g->cover[0]) {
         snprintf(icon, sizeof(icon), "%s/%s/PS3_GAME/ICON0.PNG", dir, name);
@@ -198,6 +218,7 @@ static void on_iso(const char *dir, const char *name, int isdir, void *vctx)
     g->format = fmt;
     snprintf(g->path, sizeof(g->path), "%s/%s", dir, name);
     tidy_title(g->title, stem, sizeof(g->title));
+    detect_region(g, g->path);
     snprintf(base, sizeof(base), "%s/%s", dir, stem);            /* cover next to the game (Cover Art Tool) */
     find_image(g->cover, sizeof(g->cover), base);
 }

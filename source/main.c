@@ -146,6 +146,7 @@ static float hint_pill(float x, float y, const char *pill, const char *label)
 #define COVER_H    204.0f
 #define ROW_H      292.0f
 #define VIS_ROWS   3
+#define FOOTER_Y   948.0f
 
 static const float plat_aspect[PLAT_COUNT] = { 1.0f, 0.70f, 0.86f };   /* PS1 jewel, PS2 DVD, PS3 Blu-ray */
 static const u32   plat_hue[PLAT_COUNT][2] = { { 0x545862ff, 0x1c1d22ff }, { 0x1d3fb8ff, 0x070d33ff }, { 0x46566eff, 0x10161fff } };
@@ -234,7 +235,11 @@ static void draw_grid(void)
     if (srow > top_row[plat] + 1) top_row[plat] = srow - 1;
 
     const Game *cur = &l->games[sel[plat]];
-    gfx_text_fit(MARGIN_X + 1000, 196, 24, 0xffffffc0, cur->title, SCREEN_W - MARGIN_X * 2 - 1000);
+    {
+        char pos[48];
+        snprintf(pos, sizeof(pos), "%d / %d   \xB7   A-Z", sel[plat] + 1, l->count);
+        gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(22, pos), 196, 22, 0xffffff80, pos);
+    }
 
     float bh = COVER_H, bw = COVER_H * plat_aspect[plat];
     int first = top_row[plat] * COLS, last = first + COLS * VIS_ROWS;
@@ -244,19 +249,25 @@ static void draw_grid(void)
         int r = i / COLS - top_row[plat], c = i % COLS;
         float cx = MARGIN_X + c * CELL_W + (CELL_W - bw) / 2;
         float cy = GRID_Y + r * ROW_H;
-        if (cy > SCREEN_H - 120) break;
+        if (cy > FOOTER_Y - 60) break;
         if (i == sel[plat]) continue;               /* selected drawn last, on top */
         draw_cover(&l->games[i], cx, cy, bw, bh, 0);
-        gfx_text_fit(cx, cy + bh + 16, 19, 0xffffffb0, l->games[i].title, bw + 30);
+        gfx_text_fit(cx, cy + bh + 16, 19, 0xffffffb0, l->games[i].title, CELL_W - 30);
     }
     {
         int r = sel[plat] / COLS - top_row[plat], c = sel[plat] % COLS;
         float cx = MARGIN_X + c * CELL_W + (CELL_W - bw) / 2, cy = GRID_Y + r * ROW_H;
         draw_cover(cur, cx, cy, bw, bh, 1);
-        gfx_text_fit(cx, cy + bh + 16, 21, 0xffffffff, cur->title, bw + 40);
+        gfx_text_fit(cx, cy + bh + 16, 21, 0xffffffff, cur->title, CELL_W - 30);
     }
     /* preload the next row so scrolling shows covers straight away */
     for (i = last; i < last + COLS && i < l->count; i++) covers_get(&l->games[i]);
+}
+
+static void fact(float x, float y, const char *label, const char *value, float max_w)
+{
+    gfx_text(x, y, 17, 0xffffff8c, label);
+    gfx_text_fit(x, y + 30, 30, 0xffffffff, value, max_w);
 }
 
 static void draw_info(void)
@@ -264,35 +275,48 @@ static void draw_info(void)
     GameList *l = &library[plat];
     if (l->count == 0) { mode = 0; return; }
     const Game *g = &l->games[sel[plat]];
-    char buf[160];
+    char buf[200];
 
-    gfx_rect(0, 0, SCREEN_W, SCREEN_H, 0x020a22c8);
-    gfx_rect_v(200, 150, 1520, 760, 0x143078f8, 0x061440f8);
-    gfx_frame(200, 150, 1520, 760, 1, 0xffffff40);
+    /* breadcrumb */
+    float bx = gfx_text(MARGIN_X, 56, 26, 0xffffff90, plat_short(g->plat));
+    bx = gfx_text(bx + 14, 56, 26, 0xffffff60, "\xBB");
+    gfx_text_fit(bx + 14, 56, 26, 0xffffffff, g->title, 1300);
 
-    float ch = 520, cw = ch * plat_aspect[g->plat];
-    draw_cover(g, 260, 230, cw, ch, 0);
+    /* cover, never stretched, inside a 560 x 640 box */
+    float box_w = 560, box_h = 600, cw, ch;
+    float asp = plat_aspect[g->plat];
+    const Texture *t = covers_get(g);
+    if (t) asp = (float) t->w / (float) t->h;
+    if (box_w / asp <= box_h) { cw = box_w; ch = box_w / asp; } else { ch = box_h; cw = box_h * asp; }
+    float cx = MARGIN_X + 20, cy = 190;
+    gfx_rect(cx + 10, cy + 16, cw, ch, 0x00000080);
+    if (t) gfx_image(t, cx, cy, cw, ch, 0xffffffff);
+    else   draw_placeholder(g, cx, cy, cw, ch);
+    gfx_frame(cx, cy, cw, ch, 1, 0xffffff40);
 
-    float x = 260 + cw + 70, y = 230;
-    gfx_rect(x, y, gfx_text_w(18, plat_name(g->plat)) + 28, 34, 0xffffff26);
-    gfx_text(x + 14, y + 7, 18, 0xffffffff, plat_name(g->plat));
-    gfx_text_wrap(x, y + 60, 56, 0xffffffff, g->title, 1660 - x, 2);
+    /* text column */
+    float x = MARGIN_X + 20 + box_w + 80, w = SCREEN_W - MARGIN_X - x, y = 190;
+    float chip = gfx_text_w(17, plat_name(g->plat)) + 32;
+    gfx_rect(x, y, chip, 38, 0xffffff24);
+    gfx_frame(x, y, chip, 38, 1, 0xffffff40);
+    gfx_text(x + 16, y + 8, 17, 0xffffffff, plat_name(g->plat));
+    y = gfx_text_wrap(x, y + 64, 64, 0xffffffff, g->title, w, 2);
 
-    y = 520;
-    gfx_text(x, y, 18, 0xffffff90, "FORMAT");          gfx_text(x, y + 26, 26, 0xffffffff, format_name(g->format));
-    gfx_text(x + 320, y, 18, 0xffffff90, "GAME ID");   gfx_text(x + 320, y + 26, 26, 0xffffffff, g->id[0] ? g->id : "-");
-    gfx_text(x + 640, y, 18, 0xffffff90, "REGION");    gfx_text(x + 640, y + 26, 26, 0xffffffff, "-");
-    gfx_text(x, y + 100, 18, 0xffffff90, "INSTALL LOCATION");
-    gfx_text_fit(x, y + 126, 22, 0xffffffd0, g->path, 1660 - x);
-    gfx_text(x, y + 200, 18, 0xffffff90, "COVER");
-    gfx_text_fit(x, y + 226, 22, 0xffffffd0, g->cover[0] ? g->cover : "No cover found yet - run the Cover Art Tool on your PC", 1660 - x);
+    snprintf(buf, sizeof(buf), "%s%s%s", g->region[0] ? g->region : "", g->region[0] ? "   \xB7   " : "", format_name(g->format));
+    gfx_text(x, y + 6, 26, 0xffffffb0, buf);
 
-    snprintf(buf, sizeof(buf), "More game information (description, developer, year) arrives in a later stage.");
-    gfx_text(x, 840, 18, 0xffffff70, buf);
-
-    float hx = 260;
-    hx = hint(hx, 850, 'x', "Play");
-    hint(hx, 850, 'o', "Back");
+    /* details card */
+    float ky = y + 70, kh = 330;
+    gfx_rect(x, ky, w, kh, 0x0000004a);
+    gfx_frame(x, ky, w, kh, 1, 0xffffff1c);
+    float col = (w - 80) / 3;
+    fact(x + 40,           ky + 34, "REGION",   g->region[0] ? g->region : "Unknown", col - 30);
+    fact(x + 40 + col,     ky + 34, "GAME ID",  g->id[0] ? g->id : "Not read yet", col - 30);
+    fact(x + 40 + col * 2, ky + 34, "FORMAT",   format_name(g->format), col - 30);
+    fact(x + 40,           ky + 124, "ARTWORK", g->cover[0] ? (t ? "Cover found" : "Loading...") : "No cover yet", col - 30);
+    fact(x + 40 + col,     ky + 124, "CONSOLE", plat_name(g->plat), col * 2 - 30);
+    gfx_text(x + 40, ky + 216, 17, 0xffffff8c, "INSTALL LOCATION");
+    gfx_text_wrap(x + 40, ky + 246, 22, 0xffffffd0, g->path, w - 80, 2);
 }
 
 static void draw_message(const char *title, const char *line)
@@ -304,15 +328,28 @@ static void draw_message(const char *title, const char *line)
     gfx_text_wrap(520, 510, 24, 0xffffffd0, line, 880, 4);
 }
 
+static void draw_footer_band(void)
+{
+    /* covers anything scrolling under the button bar */
+    gfx_rect_v(0, FOOTER_Y - 70, SCREEN_W, 70, 0x020a2200, 0x020a22e6);
+    gfx_rect(0, FOOTER_Y, SCREEN_W, SCREEN_H - FOOTER_Y, 0x020a22e6);
+    gfx_rect(MARGIN_X, FOOTER_Y + 2, SCREEN_W - 2 * MARGIN_X, 1, 0xffffff22);
+}
+
 static void draw_hints(void)
 {
-    float x = MARGIN_X, y = 1000;
-    gfx_rect(MARGIN_X, 984, SCREEN_W - 2 * MARGIN_X, 1, 0xffffff24);
-    x = hint(x, y, 'x', "Play");
-    x = hint(x, y, 't', "Game info");
-    x = hint_pill(x, y, "L1 / R1", "Switch console");
-    x = hint_pill(x, y, "START", "Exit");
-    { const char *ver = "v0.6"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
+    float x = MARGIN_X, y = FOOTER_Y + 40;
+    draw_footer_band();
+    if (mode == 1) {
+        x = hint(x, y, 'x', "Play");
+        x = hint(x, y, 'o', "Back");
+    } else {
+        x = hint(x, y, 'x', "Play");
+        x = hint(x, y, 't', "Game info");
+        x = hint_pill(x, y, "L1 / R1", "Switch console");
+        x = hint_pill(x, y, "START", "Exit");
+    }
+    { const char *ver = "v0.7"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
 }
 
 /* ---------------------------------------------------------------- main */
@@ -331,7 +368,7 @@ s32 main(s32 argc, const char *argv[])
 {
     int i;
     log_reset();
-    log_step("start v0.6");
+    log_step("start v0.7");
     gfx_init();
     ioPadInit(7);
     log_step("pads ok");
@@ -383,10 +420,13 @@ s32 main(s32 argc, const char *argv[])
 
         gfx_begin();
         gfx_background(anim * 0.2f);
-        draw_nav();
-        draw_grid();
+        if (mode == 1) {
+            draw_info();
+        } else {
+            draw_nav();
+            draw_grid();
+        }
         draw_hints();
-        if (mode == 1) draw_info();
         if (mode == 2) draw_message("webMAN MOD isn't responding",
                                     "The dashboard starts games through webMAN MOD. Check it is installed and enabled, then try again.  (Circle to close)");
         gfx_end();
