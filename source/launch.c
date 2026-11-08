@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #include <net/net.h>
 #include <sys/socket.h>
@@ -36,8 +37,8 @@ int launch_game(const Game *g)
     if (!net_ready) { int r = netInitialize(); log_step("netInitialize = %d", r); net_ready = 1; }
 
     url_encode(enc, sizeof(enc), g->path);
-    /* /mount_ps3 = mount the game and start it once we exit */
-    snprintf(req, sizeof(req), "GET /mount_ps3%s HTTP/1.0\r\n\r\n", enc);
+    /* /play.ps3<path> = mount the game and start it from the disc icon (webMAN waits for us to exit) */
+    snprintf(req, sizeof(req), "GET /play.ps3%s HTTP/1.0\r\n\r\n", enc);
 
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
@@ -49,7 +50,16 @@ int launch_game(const Game *g)
     if (connect(s, (struct sockaddr *) &sin, sizeof(sin)) < 0) { log_step("connect to 127.0.0.1:80 failed, errno %d (webMAN not running?)", errno); close(s); return 0; }
     log_step("sent: %s", req);
     send(s, req, strlen(req), 0);
-    usleep(300 * 1000);                         /* give webMAN a moment to take the request */
+
+    /* webMAN answers once the game is mounted - wait for that (max ~8 s) */
+    {
+        struct timeval tv = { 8, 0 };
+        char buf[512];
+        int got, total = 0;
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        while ((got = recv(s, buf, sizeof(buf), 0)) > 0) total += got;
+        log_step("webMAN replied %d bytes", total);
+    }
     close(s);
     return 1;
 }
