@@ -20,6 +20,8 @@
 #include "disc.h"
 #include "settings.h"
 
+#define APP_VERSION "v0.13"
+
 /* ---------------------------------------------------------------- input */
 enum {
     B_UP = 1, B_DOWN = 2, B_LEFT = 4, B_RIGHT = 8, B_CROSS = 16, B_CIRCLE = 32,
@@ -345,7 +347,6 @@ static const struct { int id; const char *label; const char *help; } set_items[]
     { S_HEADER, "SYSTEM", NULL },
     { S_RESCAN, "Rescan library", "Press X to look for new games on the HDD (after copying games over FTP)." },
     { S_RESET,  "Reset all settings", "Press X to put every setting back to how it started." },
-    { S_ABOUT,  "About", "PS Dashboard - games are mounted and started by webMAN MOD." },
 };
 #define SET_COUNT ((int) (sizeof(set_items) / sizeof(set_items[0])))
 
@@ -368,75 +369,98 @@ static const char *set_value(int id, char *buf, size_t n)
         case S_OPEN:   return open[settings.open_on];
         case S_DISC:   return settings.disc_popup ? "On" : "Off";
         case S_RESCAN: snprintf(buf, n, "%d games", library[0].count + library[1].count + library[2].count); return buf;
-        case S_ABOUT:  return "v0.12";
+        
     }
     return "";
 }
 
 static int set_selectable(int i) { return set_items[i].id != S_HEADER && set_items[i].id != S_ABOUT; }
 
+/* fixed columns, so labels and values can never run into each other whatever the font:
+   label column on the left, a value box on the right with < > at its edges */
 static void draw_settings_window(void)
 {
     char buf[64];
-    float wx = 330, wy = 70, ww = 1260, wh = 860;
-    float list_top = wy + 120, list_bottom = wy + wh - 120;
-    int i, row;
+    const float wx = 300, wy = 60, ww = 1320, wh = 800;
+    const float list_top = wy + 112, list_bottom = wy + wh - 112;
+    const float label_x = wx + 60, label_w = 690;
+    const float box_x = wx + 790, box_w = ww - 790 - 60;
+    const float ROW = 56, HEAD = 50;
+    int i;
 
-    gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0x90));
+    gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0xb0));
     gfx_rect(wx + 8, wy + 12, ww, wh, 0x00000060);                         /* shadow */
-    gfx_rect_v(wx, wy, ww, wh, gfx_theme_col(1, 0xf4), gfx_theme_col(2, 0xf8));
+    gfx_rect_v(wx, wy, ww, wh, gfx_theme_col(1, 0xff), gfx_theme_col(2, 0xff));
     gfx_frame(wx, wy, ww, wh, 1, 0xffffff40);
     gfx_rect(wx, wy, ww, 4, gfx_accent(0xff));
-    gfx_text(wx + 50, wy + 34, 44, 0xffffffff, "Settings");
+    gfx_text(label_x, wy + 30, 44, 0xffffffff, "Settings");
+    {
+        const char *about = "PS Dashboard " APP_VERSION "  \xB7  games start through webMAN MOD";
+        gfx_text(wx + ww - 60 - gfx_text_w(20, about), wy + 52, 20, 0xffffff80, about);
+    }
 
-    /* list */
+    /* scroll so the selected row (and its section name) is in view */
     if (set_row < set_top) set_top = set_row;
-    if (set_top > 0 && set_items[set_top - 1].id == S_HEADER && set_row == set_top) set_top--;   /* keep the section name in view */
-    for (;;) {   /* scroll down until the selected row fits */
+    if (set_top > 0 && set_items[set_top - 1].id == S_HEADER && set_row == set_top) set_top--;
+    for (;;) {
         float yy = list_top;
-        for (i = set_top; i <= set_row; i++) yy += set_items[i].id == S_HEADER ? 54 : 58;
+        for (i = set_top; i <= set_row; i++) yy += set_items[i].id == S_HEADER ? HEAD : ROW;
         if (yy <= list_bottom || set_top >= set_row) break;
         set_top++;
     }
+
     float y = list_top;
     int last_drawn = set_top - 1;
-    (void) row;
     for (i = set_top; i < SET_COUNT; i++) {
-        if (y + (set_items[i].id == S_HEADER ? 54 : 58) > list_bottom) break;
-        last_drawn = i;
         int id = set_items[i].id, on = (i == set_row);
+        if (y + (id == S_HEADER ? HEAD : ROW) > list_bottom) break;
+        last_drawn = i;
         if (id == S_HEADER) {
-            gfx_text(wx + 50, y + 18, 18, gfx_accent(0xe0), set_items[i].label);
-            gfx_rect(wx + 50, y + 46, ww - 100, 1, 0xffffff26);
-            y += 54;
+            gfx_text(label_x, y + 16, 18, gfx_accent(0xe0), set_items[i].label);
+            gfx_rect(label_x, y + 42, ww - 120, 1, 0xffffff26);
+            y += HEAD;
             continue;
         }
         if (on) {
-            gfx_rect(wx + 30, y, ww - 60, 52, 0xffffff26);
-            gfx_frame(wx + 30, y, ww - 60, 52, 1, 0xffffff70);
+            gfx_rect(wx + 36, y + 2, ww - 72, ROW - 6, 0xffffff22);
+            gfx_frame(wx + 36, y + 2, ww - 72, ROW - 6, 1, 0xffffff70);
         }
-        gfx_text(wx + 50, y + 12, 26, on ? 0xffffffff : 0xffffffc0, set_items[i].label);
-        const char *v = set_value(id, buf, sizeof(buf));
-        int arrows = on && id != S_RESCAN && id != S_RESET;
-        float vx = wx + ww - (arrows ? 96 : 60) - gfx_text_w(26, v);
-        if (arrows) {
-            gfx_text(vx - 40, y + 12, 26, 0xffffffb0, "<");
-            gfx_text(wx + ww - 76, y + 12, 26, 0xffffffb0, ">");
-        }
-        if (id == S_THEME) gfx_rect(vx - 50, y + 14, 34, 24, gfx_theme_swatch(settings.theme));
-        if (id == S_RESCAN || id == S_RESET) {
-            if (on) gfx_text(wx + ww - 60 - gfx_text_w(22, "Press X"), y + 15, 22, 0xffffffd0, "Press X");
-            if (id == S_RESCAN && !on) gfx_text(wx + ww - 60 - gfx_text_w(22, v), y + 15, 22, 0xffffff80, v);
-        } else gfx_text(vx, y + 12, 26, on ? 0xffffffff : 0xffffffa0, v);
-        y += 58;
-    }
-    /* scroll marks */
-    if (set_top > 0) gfx_text(wx + ww - 60 - gfx_text_w(18, "more above"), wy + 52, 18, 0xffffff80, "more above");
-    if (last_drawn < SET_COUNT - 1) gfx_text_center(wx + ww / 2, list_bottom + 2, 18, 0xffffff80, "more below");
+        gfx_text_fit(label_x, y + 13, 26, on ? 0xffffffff : 0xffffffc0, set_items[i].label, label_w);
 
-    /* help for the selected setting */
-    gfx_rect(wx, wy + wh - 96, ww, 1, 0xffffff26);
-    gfx_text_wrap(wx + 50, wy + wh - 76, 22, 0xffffffc0, set_items[set_row].help ? set_items[set_row].help : "", ww - 100, 2);
+        const char *v = set_value(id, buf, sizeof(buf));
+        u32 vc = on ? 0xffffffff : 0xffffffa0;
+        if (id == S_RESCAN || id == S_RESET) {
+            const char *t = on ? "Press X" : (id == S_RESCAN ? v : "");
+            float tw = gfx_text_w(22, t);
+            gfx_text(box_x + box_w - 44 - tw, y + 16, 22, on ? 0xffffffd0 : 0xffffff80, t);
+        } else {
+            float inner_x = box_x + 44, inner_w = box_w - 88;     /* room for < and > */
+            float sw = (id == S_THEME) ? 46 : 0;                 /* colour swatch before the name */
+            float tw = gfx_text_w(26, v);
+            if (tw > inner_w - sw) tw = inner_w - sw;
+            float tx = inner_x + inner_w - tw;                   /* right-aligned inside the box */
+            if (id == S_THEME) gfx_rect(tx - sw, y + 15, 32, 24, gfx_theme_swatch(settings.theme));
+            gfx_text_fit(tx, y + 13, 26, vc, v, inner_w - sw);
+            if (on && id != S_ABOUT) {
+                gfx_text(box_x + 6, y + 13, 26, 0xffffffb0, "<");
+                gfx_text(box_x + box_w - 22, y + 13, 26, 0xffffffb0, ">");
+            }
+        }
+        y += ROW;
+    }
+
+    /* scroll bar instead of text, so nothing can collide */
+    if (set_top > 0 || last_drawn < SET_COUNT - 1) {
+        float tx = wx + ww - 22, th = list_bottom - list_top;
+        float a = (float) set_top / SET_COUNT, b = (float) (last_drawn + 1) / SET_COUNT;
+        gfx_rect(tx, list_top, 4, th, 0xffffff1a);
+        gfx_rect(tx, list_top + th * a, 4, th * (b - a), 0xffffffa0);
+    }
+
+    /* help for the selected setting, in its own strip at the bottom */
+    gfx_rect(wx + 1, wy + wh - 100, ww - 2, 99, 0x00000030);
+    gfx_rect(wx, wy + wh - 100, ww, 1, 0xffffff26);
+    gfx_text_wrap(label_x, wy + wh - 84, 22, 0xffffffc0, set_items[set_row].help ? set_items[set_row].help : "", ww - 120, 2);
 }
 
 static void settings_change(int d, int pressed_x)
@@ -518,7 +542,7 @@ static void draw_hints(void)
         x = hint_pill(x, y, "SELECT", "Settings");
         x = hint_pill(x, y, "START", "Exit");
     }
-    { const char *ver = "v0.12"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
+    { const char *ver = APP_VERSION; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
 }
 
 /* ---------------------------------------------------------------- main */
@@ -625,7 +649,7 @@ s32 main(s32 argc, const char *argv[])
 {
     int i;
     log_reset();
-    log_step("start v0.12");
+    log_step("start " APP_VERSION);
     settings_load();     /* before gfx_init: it picks the font */
     gfx_init();
     settings_apply();
