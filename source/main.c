@@ -312,7 +312,7 @@ static void draw_hints(void)
     x = hint(x, y, 't', "Game info");
     x = hint_pill(x, y, "L1 / R1", "Switch console");
     x = hint_pill(x, y, "START", "Exit");
-    gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, "v0.4"), y + 8, 18, 0xffffff60, "v0.4");
+    { const char *ver = "v0.5 (" TOOLSET ")"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
 }
 
 /* ---------------------------------------------------------------- main */
@@ -331,7 +331,7 @@ s32 main(s32 argc, const char *argv[])
 {
     int i;
     log_reset();
-    log_step("start");
+    log_step("start v0.5, tools: " TOOLSET);
     gfx_init();
     ioPadInit(7);
     log_step("pads ok");

@@ -10,6 +10,24 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # newest nightly toolchain (GCC 13 + binutils 2.42)
+          - tools: nightly
+            toolchain_tag: ""
+            libraries_tag: ""
+            psl1ght_ref: master
+            test_appid: TSTA00001
+            test_title: "Test A - ghosts (nightly)"
+          # June 2026 toolchain, before the binutils/GCC overhaul
+          - tools: june
+            toolchain_tag: "2026-06-09"
+            libraries_tag: "nightly-2026-06-16"
+            psl1ght_ref: b55429b
+            test_appid: TSTB00001
+            test_title: "Test B - ghosts (June)"
     env:
       PS3DEV: ${{ github.workspace }}/ps3dev
       PSL1GHT: ${{ github.workspace }}/ps3dev
@@ -25,7 +43,6 @@ jobs:
       - name: Add toolchain to PATH
         run: echo "$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin" >> $GITHUB_PATH
 
-      # The SDK below changes rarely; cache it for a week so most builds take ~1 minute.
       - name: Week number (cache key)
         id: week
         run: echo "w=$(date -u +%G-%V)" >> $GITHUB_OUTPUT
@@ -35,71 +52,95 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ps3dev
-          key: ps3sdk-${{ runner.os }}-${{ steps.week.outputs.w }}-v1
+          key: ps3sdk-${{ matrix.tools }}-${{ runner.os }}-${{ steps.week.outputs.w }}-v2
 
-      - name: Download PS3 toolchain (ps3dev/ps3toolchain, latest prerelease)
+      - name: Download PS3 toolchain
         if: steps.sdk.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          url=$(gh api repos/ps3dev/ps3toolchain/releases --jq '[.[] | select(.prerelease and (.draft|not))] | sort_by(.published_at) | reverse | .[0].assets[] | select(.name=="ps3dev-linux-X64.tar.gz") | .browser_download_url')
-          echo "Toolchain: $url"
-          test -n "$url"
+          if [ -n "${{ matrix.toolchain_tag }}" ]; then
+            assets=$(gh api repos/ps3dev/ps3toolchain/releases/tags/${{ matrix.toolchain_tag }} --jq '.assets[] | "\(.name) \(.browser_download_url)"')
+          else
+            assets=$(gh api repos/ps3dev/ps3toolchain/releases --jq '[.[] | select(.prerelease and (.draft|not))] | sort_by(.published_at) | reverse | .[0].assets[] | "\(.name) \(.browser_download_url)"')
+          fi
+          echo "$assets"
+          url=$(echo "$assets" | grep -i linux | grep -i 'x64\|amd64\|x86_64' | grep 'tar' | head -1 | cut -d' ' -f2)
+          [ -n "$url" ] || url=$(echo "$assets" | grep -i linux | grep tar | head -1 | cut -d' ' -f2)
+          echo "Toolchain: $url"; test -n "$url"
           curl -sL "$url" | tar xz -C "$GITHUB_WORKSPACE"
-          ls "$PS3DEV"
+          ls "$PS3DEV"; ppu-gcc --version | head -1; ppu-ld --version | head -1
 
       - name: Build PSL1GHT SDK
         if: steps.sdk.outputs.cache-hit != 'true'
         run: |
-          git clone --depth 1 https://github.com/ps3dev/PSL1GHT.git /tmp/psl1ght
+          rm -rf /tmp/psl1ght
+          git clone https://github.com/ps3dev/PSL1GHT.git /tmp/psl1ght
+          git -C /tmp/psl1ght checkout ${{ matrix.psl1ght_ref }}
           cd /tmp/psl1ght
           make install-ctrl
           make -j"$(nproc)"
           make install
 
-      - name: Add libraries (ps3dev/ps3libraries, latest prerelease)
+      - name: Add libraries (ps3libraries)
         if: steps.sdk.outputs.cache-hit != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          url=$(gh api repos/ps3dev/ps3libraries/releases --jq '[.[] | select(.prerelease and (.draft|not))] | sort_by(.published_at) | reverse | .[0].assets[] | select(.name=="ps3libraries-linux-X64.tar.gz") | .browser_download_url')
-          echo "Libraries: $url"
-          test -n "$url"
+          if [ -n "${{ matrix.libraries_tag }}" ]; then
+            assets=$(gh api repos/ps3dev/ps3libraries/releases/tags/${{ matrix.libraries_tag }} --jq '.assets[] | "\(.name) \(.browser_download_url)"')
+          else
+            assets=$(gh api repos/ps3dev/ps3libraries/releases --jq '[.[] | select(.prerelease and (.draft|not))] | sort_by(.published_at) | reverse | .[0].assets[] | "\(.name) \(.browser_download_url)"')
+          fi
+          echo "$assets"
+          url=$(echo "$assets" | grep -i linux | grep -i 'x64\|amd64\|x86_64' | grep tar | head -1 | cut -d' ' -f2)
+          echo "Libraries: $url"; test -n "$url"
           curl -sL "$url" | tar xz -C "$PSL1GHT"
-          ls "$PSL1GHT/portlibs/ppu/lib" | head -50
+          ls "$PSL1GHT/portlibs/ppu/lib" | grep -i "freetype\|tiny3d\|font3d"
 
-      # Tiny3D's command-buffer callback is not safe with the modern compiler
-      # (hangs the GPU the first time the buffer wraps) - rebuild it patched.
-      - name: Build Tiny3D with callback fix
+      - name: Build Tiny3D (with callback hardening)
         run: |
           rm -rf /tmp/tiny3d
           git clone --depth 1 https://github.com/wargio/tiny3d /tmp/tiny3d
           python3 tools/fix_tiny3d.py /tmp/tiny3d/lib/source/buffer.c
           make -C /tmp/tiny3d/lib install
           make -C /tmp/tiny3d/libfont install
-          echo "---- patched callback as compiled ----"
-          obj=$(find /tmp/tiny3d/lib -name 'buffer.o' | head -1); echo "object: $obj"
-          ppu-objdump -d "$obj" | sed -n '/tiny_rsxContextCallback/,/^$/p' | head -60
-          echo "---- original callback as compiled (for comparison) ----"
-          git -C /tmp/tiny3d show HEAD:lib/source/buffer.c > /tmp/orig_buffer.c
-          ppu-gcc -O2 -mcpu=cell -fgnu89-inline -I/tmp/tiny3d/lib/source -I/tmp/tiny3d/lib/include -I$PSL1GHT/ppu/include -I$PS3DEV/portlibs/ppu/include -c /tmp/orig_buffer.c -o /tmp/orig_buffer.o && ppu-objdump -d /tmp/orig_buffer.o | sed -n '/tiny_rsxContextCallback/,/^$/p' | head -60 || true
+
+      - name: Build test app (unmodified Tiny3D 'sprites2D' sample)
+        run: |
+          cd /tmp/tiny3d/samples/sprites2D
+          make pkg APPID=${{ matrix.test_appid }} TITLE="${{ matrix.test_title }}"
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp sprites2D.pkg "$GITHUB_WORKSPACE/out/Test_${{ matrix.tools }}_ghosts.pkg"
 
       - name: Build dashboard PKG
         run: |
-          make pkg
-          ls -la *.pkg
+          make clean || true
+          make pkg TOOLSET=${{ matrix.tools }}
+          cp PS_Dashboard.pkg "out/PS_Dashboard_${{ matrix.tools }}.pkg"
+          ls -la out
 
-      - name: Upload PKG
+      - name: Upload PKGs
         uses: actions/upload-artifact@v4
         with:
-          name: ps3-dashboard-pkg
-          path: "*.pkg"
+          name: pkgs-${{ matrix.tools }}
+          path: out/*.pkg
 
-      - name: Publish as "latest" release (easy download)
-        if: github.ref == 'refs/heads/main'
+  release:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish "latest" release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete latest --yes --cleanup-tag || true
-          gh release create latest *.pkg --title "Latest build (${GITHUB_SHA::7})" \
-            --notes "Install PS_Dashboard.pkg with the PS3 Package Installer (try PS_Dashboard.gnpdrm.pkg if your firmware refuses it)." --prerelease
+          ls -la out
+          gh release delete latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create latest out/*.pkg --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Latest build (${GITHUB_SHA::7})" --prerelease \
+            --notes "PS_Dashboard_june.pkg = built with the June 2026 PS3 toolchain. Test_*_ghosts.pkg = Tiny3D sample used for testing."

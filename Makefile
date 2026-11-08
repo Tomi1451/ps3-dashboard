@@ -45,7 +45,8 @@ LIBS		:=	-lfont3d -lfreetype -ltiny3d -lrsx -ljpgdec -lpngdec -lnet -lz -lsimdma
 # options for code generation
 #---------------------------------------------------------------------------------
 
-CFLAGS		=	-O2 -Wall -std=gnu99 -mcpu=cell $(MACHDEP) $(INCLUDE)
+TOOLSET		?=	nightly
+CFLAGS		=	-O2 -Wall -std=gnu99 -mcpu=cell -DTOOLSET=\"$(TOOLSET)\" $(MACHDEP) $(INCLUDE)
 CXXFLAGS	=	$(CFLAGS)
 
 LDFLAGS		=	$(MACHDEP) -Wl,-Map,$(notdir $@).map
