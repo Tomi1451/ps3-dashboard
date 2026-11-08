@@ -57,3 +57,17 @@ const Texture *covers_get(const Game *g)
 int launch_game(const Game *g) { return 1; }
 void log_reset(void) {}
 void log_step(const char *fmt, ...) {}
+#include "../../../source/disc.h"
+/* PREVIEW_DISC=1/2/3 pretends a PS1/PS2/PS3 disc goes in on frame 3 */
+int launch_disc(void) { return 1; }
+int install_disc(const char *t) { return 1; }
+const char *disc_name(int type) { return type == DISC_PS1 ? "PlayStation disc" : type == DISC_PS2 ? "PlayStation 2 disc" : "PlayStation 3 disc"; }
+int disc_poll(DiscInfo *d)
+{
+    static int f = 0; const char *e = getenv("PREVIEW_DISC");
+    if (!e || ++f != 3) return 0;
+    memset(d, 0, sizeof(*d)); d->type = atoi(e);
+    if (d->type == DISC_PS3) { strcpy(d->title, "Gran Turismo 5"); strcpy(d->id, "BCES00569"); }
+    else strcpy(d->id, d->type == DISC_PS1 ? "SCES-00984" : "SLES-50330");
+    return 1;
+}

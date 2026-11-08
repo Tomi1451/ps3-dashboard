@@ -17,6 +17,7 @@
 #include "covers.h"
 #include "launch.h"
 #include "log.h"
+#include "disc.h"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -154,7 +155,9 @@ static const u32   plat_hue[PLAT_COUNT][2] = { { 0x545862ff, 0x1c1d22ff }, { 0x1
 static int plat = PLAT_PS1;
 static int sel[PLAT_COUNT];
 static int top_row[PLAT_COUNT];
-static int mode = 0;            /* 0 grid, 1 info panel, 2 webMAN error */
+static int mode = 0;            /* 0 grid, 1 info panel, 2 webMAN error, 3 disc inserted */
+static int prev_mode = 0, disc_choice = 0;
+static DiscInfo disc;
 static float anim = 0.0f;       /* selection pulse */
 
 static void draw_placeholder(const Game *g, float x, float y, float w, float h)
@@ -340,7 +343,10 @@ static void draw_hints(void)
 {
     float x = MARGIN_X, y = FOOTER_Y + 40;
     draw_footer_band();
-    if (mode == 1) {
+    if (mode == 3) {
+        x = hint(x, y, 'x', "Select");
+        x = hint(x, y, 'o', "Not now");
+    } else if (mode == 1) {
         x = hint(x, y, 'x', "Play");
         x = hint(x, y, 'o', "Back");
     } else {
@@ -349,7 +355,7 @@ static void draw_hints(void)
         x = hint_pill(x, y, "L1 / R1", "Switch console");
         x = hint_pill(x, y, "START", "Exit");
     }
-    { const char *ver = "v0.9"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
+    { const char *ver = "v0.10"; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
 }
 
 /* ---------------------------------------------------------------- main */
@@ -364,11 +370,72 @@ static void start_game(const Game *g)
     mode = 2;
 }
 
+static int disc_can_install(void) { return disc.type == DISC_PS3; }
+
+static void draw_disc_popup(void)
+{
+    char line[200];
+    float x = 460, y = 330, w = 1000, h = 420;
+    gfx_rect(0, 0, SCREEN_W, SCREEN_H, 0x020a22d0);
+    gfx_rect_v(x, y, w, h, 0x143078f8, 0x061440f8);
+    gfx_frame(x, y, w, h, 1, 0xffffff40);
+    gfx_text(x + 60, y + 44, 20, 0xffffff8c, "DISC INSERTED");
+    gfx_text_fit(x + 60, y + 80, 44, 0xffffffff, disc.title[0] ? disc.title : disc_name(disc.type), w - 120);
+    if (disc.title[0]) snprintf(line, sizeof(line), "%s%s%s", disc_name(disc.type), disc.id[0] ? "   \xB7   " : "", disc.id);
+    else snprintf(line, sizeof(line), "%s", disc.id[0] ? disc.id : "Game ID not readable yet");
+    gfx_text_fit(x + 60, y + 144, 24, 0xffffffb0, line, w - 120);
+
+    const char *labels[2] = { "Play", "Install to HDD" };
+    int i;
+    for (i = 0; i < 2; i++) {
+        float bx = x + 60 + i * 300, by = y + 210, bw = 270, bh = 70;
+        int on = (disc_choice == i), ok = (i == 0 || disc_can_install());
+        gfx_rect(bx, by, bw, bh, on ? 0xffffff30 : 0xffffff10);
+        gfx_frame(bx, by, bw, bh, on ? 2 : 1, on ? 0xffffffd0 : 0xffffff30);
+        gfx_text_center(bx + bw / 2, by + 20, 28, ok ? 0xffffffff : 0xffffff50, labels[i]);
+    }
+    const char *note =
+        disc_choice == 1 ? "webMAN copies the disc to /dev_hdd0/GAMES on the XMB and tells you when it's finished. It then appears in your PS3 library." :
+        disc_can_install() ? "Starts the disc from the XMB once the dashboard has closed." :
+        "Starts the disc from the XMB once the dashboard has closed.  Installing PlayStation and PS2 discs to the HDD isn't available yet.";
+    gfx_text_wrap(x + 60, y + 310, 22, 0xffffffc0, note, w - 120, 3);
+}
+
+static void disc_action(void)
+{
+    char line[220], target[300], name[120];
+    int ok;
+    if (disc_choice == 1 && !disc_can_install()) return;
+    if (disc_choice == 0) {
+        snprintf(line, sizeof(line), "Starting %s ...  It opens by itself once the XMB has loaded - don't press any buttons.", disc.title[0] ? disc.title : disc_name(disc.type));
+        gfx_begin(); gfx_background(anim * 0.2f); draw_message("Loading disc", line); gfx_end();
+        log_step("disc: play");
+        ok = launch_disc();
+    } else {
+        /* folder name: "<title> [<ID>]" with characters the HDD can't take removed */
+        const char *src = disc.title[0] ? disc.title : (disc.id[0] ? disc.id : "PS3 disc");
+        size_t j = 0;
+        for (; *src && j + 1 < sizeof(name); src++)
+            if (!strchr("\\/:*?\"<>|", *src)) name[j++] = *src;
+        name[j] = 0;
+        if (disc.title[0] && disc.id[0]) snprintf(target, sizeof(target), "/dev_hdd0/GAMES/%s [%s]", name, disc.id);
+        else snprintf(target, sizeof(target), "/dev_hdd0/GAMES/%s", name);
+        snprintf(line, sizeof(line), "Copying to %s on the XMB. webMAN shows the progress and tells you when it's done.", target);
+        gfx_begin(); gfx_background(anim * 0.2f); draw_message("Installing disc", line); gfx_end();
+        log_step("disc: install to %s", target);
+        ok = install_disc(target);
+        if (ok) sleep(3);   /* leave the message up long enough to read */
+    }
+    if (ok) { log_step("webMAN accepted"); exit(0); }
+    log_step("webMAN not reachable");
+    mode = 2;
+}
+
 s32 main(s32 argc, const char *argv[])
 {
     int i;
     log_reset();
-    log_step("start v0.9");
+    log_step("start v0.10");
     gfx_init();
     ioPadInit(7);
     log_step("pads ok");
@@ -394,8 +461,15 @@ s32 main(s32 argc, const char *argv[])
         covers_frame();
         anim += 0.06f;
 
+        if (mode != 3 && disc_poll(&disc)) { prev_mode = (mode == 2) ? 0 : mode; mode = 3; disc_choice = 0; }
+
         GameList *l = &library[plat];
-        if (mode == 0) {
+        if (mode == 3) {
+            if (pad_pressed & B_LEFT) disc_choice = 0;
+            if ((pad_pressed & B_RIGHT) && disc_can_install()) disc_choice = 1;
+            if (pad_pressed & B_CIRCLE) mode = prev_mode;
+            else if (pad_pressed & B_CROSS) disc_action();
+        } else if (mode == 0) {
             if (pad_pressed & B_R1) plat = (plat + 1) % PLAT_COUNT;
             if (pad_pressed & B_L1) plat = (plat + PLAT_COUNT - 1) % PLAT_COUNT;
             l = &library[plat];
@@ -420,12 +494,13 @@ s32 main(s32 argc, const char *argv[])
 
         gfx_begin();
         gfx_background(anim * 0.2f);
-        if (mode == 1) {
+        if (mode == 1 || (mode == 3 && prev_mode == 1)) {
             draw_info();
         } else {
             draw_nav();
             draw_grid();
         }
+        if (mode == 3) draw_disc_popup();
         draw_hints();
         if (mode == 2) draw_message("webMAN MOD isn't responding",
                                     "The dashboard starts games through webMAN MOD. Check it is installed and enabled, then try again.  (Circle to close)");

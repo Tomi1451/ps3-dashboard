@@ -28,22 +28,15 @@ static void url_encode(char *dst, size_t n, const char *src)
     dst[j] = 0;
 }
 
-int launch_game(const Game *g)
+/* sends one request to webMAN; webMAN runs ";"-chained commands one after another, in the background */
+static int webman_send(const char *cmds)
 {
-    char enc[1024], req[1200];
+    char req[1400];
     struct sockaddr_in sin;
     int s;
 
     if (!net_ready) { int r = netInitialize(); log_step("netInitialize = %d", r); net_ready = 1; }
-
-    url_encode(enc, sizeof(enc), g->path);
-    /* webMAN multi-command (commands chained with ";"), run by webMAN after we exit:
-       1. /wait.ps3?xmb  - wait until the XMB has fully reloaded (explore_plugin is back)
-       2. /wait.ps3?2    - give it 2 more seconds to settle
-       3. /play.ps3<path> - mount the game and start it from the disc icon
-       A single /play.ps3 sent while we are still running only mounts: webMAN checks for the
-       XMB once, right as we close, while the XMB is still loading - so it skips the start. */
-    snprintf(req, sizeof(req), "GET /wait.ps3?xmb;/wait.ps3?2;/play.ps3%s HTTP/1.0\r\n\r\n", enc);
+    snprintf(req, sizeof(req), "GET %s HTTP/1.0\r\n\r\n", cmds);
 
     memset(&sin, 0, sizeof(sin));
     sin.sin_family = AF_INET;
@@ -56,7 +49,7 @@ int launch_game(const Game *g)
     log_step("sent: %s", req);
     send(s, req, strlen(req), 0);
 
-    /* webMAN only answers after the whole chain has run (after we exit), so don't wait for it */
+    /* webMAN answers only after the whole chain has run (after we exit), so don't wait long */
     {
         struct timeval tv = { 1, 0 };
         char buf[512];
@@ -67,4 +60,34 @@ int launch_game(const Game *g)
     }
     close(s);
     return 1;
+}
+
+/* Chain run by webMAN after we exit:
+   /wait.ps3?xmb   - wait until the XMB has fully reloaded
+   /wait.ps3?2     - 2 more seconds to settle
+   /play.ps3<path> - mount the game and start it from the disc icon
+   A lone /play.ps3 sent while we are still running only mounts: webMAN checks for the XMB once,
+   right as we close and the XMB is still loading, so it skips the start. */
+int launch_game(const Game *g)
+{
+    char enc[1024], cmds[1200];
+    url_encode(enc, sizeof(enc), g->path);
+    snprintf(cmds, sizeof(cmds), "/wait.ps3?xmb;/wait.ps3?2;/play.ps3%s", enc);
+    return webman_send(cmds);
+}
+
+/* real disc in the drive: drop any mounted game image so the XMB sees the disc, then start it */
+int launch_disc(void)
+{
+    return webman_send("/mount.ps3/unmount;/wait.ps3?xmb;/wait.ps3?3;/play.ps3");
+}
+
+/* PS3 disc -> folder game on the HDD, copied by webMAN (it decrypts the disc as it copies and
+   shows its own progress / "copy finished" notifications on the XMB) */
+int install_disc(const char *target)
+{
+    char enc[600], cmds[800];
+    url_encode(enc, sizeof(enc), target);
+    snprintf(cmds, sizeof(cmds), "/mount.ps3/unmount;/wait.ps3?xmb;/wait.ps3?3;/copy.ps3/dev_bdvd&to=%s", enc);
+    return webman_send(cmds);
 }

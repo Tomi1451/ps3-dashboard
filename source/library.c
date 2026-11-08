@@ -120,7 +120,7 @@ static int find_image(char *out, size_t n, const char *base)
 }
 
 /* tiny PARAM.SFO reader: TITLE and TITLE_ID */
-static void read_sfo(const char *path, char *title, size_t tn, char *id, size_t in)
+void read_sfo(const char *path, char *title, size_t tn, char *id, size_t in)
 {
     s32 fd; u64 got = 0;
     static u8 buf[8192];
@@ -197,8 +197,8 @@ static void on_iso(const char *dir, const char *name, int isdir, void *vctx)
     char base[512], stem[256];
     int fmt = -1;
 
-    if (isdir) {   /* PS1 games often live in their own folder (BIN+CUE) */
-        if (ctx->plat == PLAT_PS1 && ctx->depth == 0) {
+    if (isdir) {   /* games often live in their own folder (PS2ISO/Game/Game.iso, PSXISO/Game/Game.bin) */
+        if (ctx->depth == 0) {
             IsoCtx sub = { ctx->plat, 1 };
             char sd[512];
             snprintf(sd, sizeof(sd), "%s/%s", dir, name);
@@ -208,7 +208,7 @@ static void on_iso(const char *dir, const char *name, int isdir, void *vctx)
     }
     if (ends_with(name, ".iso") || ends_with(name, ".iso.0")) fmt = FMT_ISO;
     else if (ctx->plat == PLAT_PS2 && ends_with(name, ".bin.enc")) fmt = FMT_CLASSIC;
-    else if (ctx->plat == PLAT_PS1 && (ends_with(name, ".bin") || ends_with(name, ".img") || ends_with(name, ".mdf"))) fmt = FMT_BINCUE;
+    else if (ctx->plat != PLAT_PS3 && (ends_with(name, ".bin") || ends_with(name, ".img") || ends_with(name, ".mdf"))) fmt = FMT_BINCUE;   /* webMAN mounts these for PS1 and PS2 (CD-based PS2 games) */
     if (fmt < 0) return;
 
     strncpy(stem, name, sizeof(stem) - 1); stem[sizeof(stem) - 1] = 0;
