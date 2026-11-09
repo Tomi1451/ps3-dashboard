@@ -157,7 +157,9 @@ void gfx_init(void)
     float sx = (float) Video_Resolution.width, sy = (float) Video_Resolution.height;
     tiny3d_UserViewport(1, 0.0f, 0.0f, sx / SCREEN_W, sy / SCREEN_H, sx / 1920.0f, sy / 1080.0f);
     SetFontScreenLimits(SCREEN_W, SCREEN_H);
-    SetFontZ(0.0f);
+    /* text at the same depth as every shape: Tiny3D depth-tests with LESS-OR-EQUAL, so text
+       at z 0 used to "win" against panels drawn over it later and showed through them */
+    SetFontZ(1000.0f);
 }
 
 u32 *gfx_tex_alloc(u32 bytes)

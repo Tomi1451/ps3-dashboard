@@ -20,7 +20,7 @@
 #include "disc.h"
 #include "settings.h"
 
-#define APP_VERSION "v0.13"
+#define APP_VERSION "v0.14"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -381,7 +381,7 @@ static int set_selectable(int i) { return set_items[i].id != S_HEADER && set_ite
 static void draw_settings_window(void)
 {
     char buf[64];
-    const float wx = 300, wy = 60, ww = 1320, wh = 800;
+    const float ww = 1320, wh = 760, wx = (SCREEN_W - ww) / 2, wy = (SCREEN_H - wh) / 2;   /* centred */
     const float list_top = wy + 112, list_bottom = wy + wh - 112;
     const float label_x = wx + 60, label_w = 690;
     const float box_x = wx + 790, box_w = ww - 790 - 60;
@@ -524,7 +524,7 @@ static void draw_footer_band(void)
 static void draw_hints(void)
 {
     float x = MARGIN_X, y = FOOTER_Y + 40;
-    draw_footer_band();
+    if (!show_settings) draw_footer_band();   /* the settings window dims everything itself */
     if (show_settings) {
         x = hint_pill(x, y, "UP / DOWN", "Choose");
         x = hint_pill(x, y, "LEFT / RIGHT", "Change");
