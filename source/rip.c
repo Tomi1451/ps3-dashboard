@@ -82,11 +82,45 @@ static int atapi_in(u32 fd, const u8 *pkt, void *buf, u32 len)
     return r;
 }
 
+/* sys_storage_send_device_command (syscall 604) with a "native" SCSI packet - the way
+   Cobra's own cobra_cd_read() reads PS1 discs from user space: a 56-byte block holding the
+   12-byte SCSI command, then at offset 32 { inlen, unk1, outlen, unk2, unk3 } */
+static int st_devcmd(u32 fd, u32 cmd, void *in, u32 inlen, void *out, u32 outlen)
+{ lv2syscall6(604, fd, cmd, (u64)(u32) in, inlen, (u64)(u32) out, outlen); return_to_user_prog(int); }
+
+static int native_cmd(u32 fd, const u8 *cdb, void *out, u32 outlen)
+{
+    u8 blk[56];
+    u32 *d = (u32 *) (blk + 32);
+    memset(blk, 0, sizeof(blk));
+    memcpy(blk, cdb, 12);
+    d[0] = 12; d[1] = 1; d[2] = outlen; d[3] = 1; d[4] = 1;
+    return st_devcmd(fd, 1, blk, sizeof(blk), out, outlen);
+}
+
+static int raw_method = 0;            /* 0 not chosen yet, 1 native (604), 2 ATAPI (616) */
+
 /* READ CD (0xBE): n full 2352-byte sectors from lba. audio=1 for CD-DA tracks */
 static int read_cd_raw(u32 fd, u32 lba, u32 n, void *buf, int audio)
 {
+    u32 i;
+    int r = 0;
+    if (raw_method != 2) {            /* one sector per command, as Cobra does */
+        for (i = 0; i < n; i++) {
+            u32 l = lba + i;
+            u8 p[12] = { 0xBE, 0, l >> 24, l >> 16, l >> 8, l, 0, 0, 1, audio ? 0x10 : 0xF8, 0, 0 };
+            int k;
+            for (k = 0; k < 3; k++) if ((r = native_cmd(fd, p, (u8 *) buf + i * 2352, 2352)) == 0) break;
+            if (r) break;
+        }
+        if (r == 0) { if (!raw_method) { raw_method = 1; log_step("rip: raw reads via native SCSI (604)"); } return 0; }
+        if (raw_method == 1) return r;
+        log_step("rip: native SCSI read failed %08X, trying ATAPI", (u32) r);
+    }
     u8 p[12] = { 0xBE, 0, lba >> 24, lba >> 16, lba >> 8, lba, n >> 16, n >> 8, n, audio ? 0x10 : 0xF8, 0, 0 };
-    return atapi_in(fd, p, buf, n * 2352);
+    r = atapi_in(fd, p, buf, n * 2352);
+    if (r == 0 && !raw_method) { raw_method = 2; log_step("rip: raw reads via ATAPI (616)"); }
+    return r;
 }
 
 /* READ TOC (0x43) format 0, LBA addresses */
@@ -116,6 +150,7 @@ static struct {
     int  retries;
     int  created, made_dir;          /* only ever delete what we made */
     char want_id[24];                /* game ID of the disc in the drive */
+    char got_id[24];                 /* game ID found in the data itself */
     int  id_checked;
 } R;
 
@@ -303,6 +338,36 @@ static void write_cue(void)
     }
 }
 
+/* the ID wasn't known when we started: put the one found on the disc into the name now,
+   "Name.bin" -> "Name [SCES-01078].bin", so the cover and game-info tools can match it */
+static void add_found_id(void)
+{
+    char id[24], nf[300], np[512], nd[400], nc[512];
+    if (R.want_id[0] || strlen(R.got_id) < 9 || strstr(R.fname, "[")) return;
+    snprintf(id, sizeof(id), "%.4s-%s", R.got_id, R.got_id + 4);
+    snprintf(nf, sizeof(nf), "%s [%s]", R.fname, id);
+    if (R.type == RIP_PS2) {
+        snprintf(np, sizeof(np), "/dev_hdd0/PS2ISO/%s.iso", nf);
+        if (file_exists(np) || sysLv2FsRename(R.path, np)) return;
+    } else {
+        snprintf(nd, sizeof(nd), "/dev_hdd0/PSXISO/%s", nf);
+        if (file_exists(nd) || sysLv2FsRename(R.dir, nd)) return;
+        snprintf(np, sizeof(np), "%s/%s.bin", nd, R.fname);
+        snprintf(nc, sizeof(nc), "%s/%s.bin", nd, nf);
+        if (sysLv2FsRename(np, nc)) {            /* folder renamed, file kept its old name */
+            strcpy(R.dir, nd); snprintf(R.path, sizeof(R.path), "%s", np);
+            snprintf(R.cue, sizeof(R.cue), "%s/%s.cue", nd, R.fname);
+            return;
+        }
+        strcpy(R.dir, nd); strcpy(np, nc);
+        snprintf(R.cue, sizeof(R.cue), "%s/%s.cue", nd, nf);
+    }
+    strcpy(R.path, np);
+    strcpy(R.fname, nf);
+    snprintf(R.msg, sizeof(R.msg), "%s", nf);
+    log_step("rip: renamed to %s", R.path);
+}
+
 int rip_step(void)
 {
     int r;
@@ -312,6 +377,7 @@ int rip_step(void)
     if (R.pos >= R.total) {
         cleanup(0);
         sysLv2FsChmod(R.path, 0666);
+        add_found_id();
         if (R.type == RIP_PS1) write_cue();
         R.done = 1;
         log_step("rip: finished, %u sectors", R.total);
@@ -336,10 +402,15 @@ int rip_step(void)
     R.retries = 0;
     /* make sure this really is the disc in the drive (a game image left mounted by webMAN
        would be read instead): its SYSTEM.CNF must name the same game ID */
+    if (!R.id_checked && !R.want_id[0]) {      /* no ID to check against: just note what the disc says */
+        char found[24];
+        if (find_boot_id(R.buf, got * R.sector, found)) { R.id_checked = 1; strcpy(R.got_id, found); log_step("rip: disc's boot file says %s", found); }
+    }
     if (!R.id_checked && R.want_id[0]) {
         char found[24];
         if (find_boot_id(R.buf, got * R.sector, found)) {
             R.id_checked = 1;
+            strcpy(R.got_id, found);
             log_step("rip: disc says %s, expected %s", found, R.want_id);
             if (strcmp(found, R.want_id)) {
                 snprintf(R.msg, sizeof(R.msg), "Stopped: the drive gave a different game (%s) instead of %s. A mounted game image was probably in the way - try again.", found, R.want_id);
