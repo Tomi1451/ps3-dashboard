@@ -32,7 +32,7 @@
 #include <sys/file.h>
 #include <strings.h>
 
-#define APP_VERSION "v0.20"
+#define APP_VERSION "v0.21"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -1019,10 +1019,8 @@ static void draw_disc_picker(void)
     }
 }
 
-#define MULTIMAN_EBOOT "/dev_hdd0/game/BLES80608/USRDIR/EBOOT.BIN"
-static int have_multiman(void) { sysFSStat st; return sysLv2FsStat(MULTIMAN_EBOOT, &st) == 0; }
 static int disc_can_install(void) { return disc.type == DISC_PS3 || disc.type == DISC_PS1 || disc.type == DISC_PS2; }
-static int disc_choices(void) { return disc.type == DISC_PS3 ? 2 : (disc.type == DISC_PS1 || disc.type == DISC_PS2) ? (have_multiman() ? 3 : 2) : 1; }
+static int disc_choices(void) { return (disc.type == DISC_PS3 || disc.type == DISC_PS1 || disc.type == DISC_PS2) ? 2 : 1; }
 
 static void draw_disc_popup(void)
 {
@@ -1037,7 +1035,7 @@ static void draw_disc_popup(void)
     else snprintf(line, sizeof(line), "%s", disc.id[0] ? disc.id : "Game ID not readable yet");
     gfx_text_fit(x + 60, y + 144, 24, 0xffffffb0, line, w - 120);
 
-    const char *labels[3] = { "Play", disc.type == DISC_PS3 ? "Install to HDD" : "Make ISO", "Use multiMAN" };
+    const char *labels[2] = { "Play", disc.type == DISC_PS3 ? "Install to HDD" : "Make ISO" };
     int i;
     for (i = 0; i < disc_choices(); i++) {
         float bx = x + 60 + i * 300, by = y + 210, bw = 270, bh = 70;
@@ -1049,9 +1047,8 @@ static void draw_disc_popup(void)
     const char *note =
         disc_choice == 0 ? "Starts the disc from the XMB once the dashboard has closed." :
         disc.type == DISC_PS3 ? "webMAN copies the disc to /dev_hdd0/GAMES on the XMB and tells you when it's finished. It then appears in your PS3 library." :
-        disc_choice == 1 ? (disc.type == DISC_PS1 ? "Copies the whole disc - video, music and CD audio tracks included - to PSXISO as a BIN + CUE, right here. You name it first." :
-                                                    "Copies the disc to PS2ISO as an ISO, right here. You name it first.") :
-        "Opens multiMAN instead (mmCM mode > Create ISO), if you'd rather use that.";
+        disc.type == DISC_PS1 ? "Copies the whole disc - video, music and CD audio tracks included - to PSXISO as a BIN + CUE, right here. You name it first." :
+                                "Copies the disc to PS2ISO as an ISO, right here. You name it first.";
     gfx_text_wrap(x + 60, y + 310, 22, 0xffffffc0, note, w - 120, 3);
 }
 
@@ -1068,18 +1065,6 @@ static void disc_action(void)
         gfx_begin(); gfx_background(anim * 0.2f); draw_message("Loading disc", line); gfx_end();
         log_step("disc: play");
         ok = launch_disc();
-    } else if (disc.type != DISC_PS3) {
-        /* "Use multiMAN": hand over to multiMAN, which can read and image these discs.
-           Started through webMAN like an XMB icon - starting its EBOOT directly
-           from here just dropped back to the XMB. */
-        gfx_begin(); gfx_background(anim * 0.2f);
-        draw_message("Opening multiMAN", "multiMAN opens by itself once the XMB has loaded. Then: switch to mmCM mode, select the disc and choose Create ISO. Afterwards use Settings > Rescan library here.");
-        gfx_end();
-        log_step("disc: opening multiMAN through webMAN");
-        if (open_multiman()) { sleep(4); leave_app(); }
-        log_step("webMAN not reachable");
-        mode = 2;
-        return;
     } else {
         /* folder name: "<title> [<ID>]" with characters the HDD can't take removed */
         const char *src = disc.title[0] ? disc.title : (disc.id[0] ? disc.id : "PS3 disc");
@@ -1180,7 +1165,7 @@ static void draw_rip(void)
         gfx_text(x + 50, y + 40, 20, 0xffffff8c, "COULDN'T MAKE THE ISO");
         gfx_text_wrap(x + 50, y + 80, 26, 0xffffffff, rip_message(), w - 100, 3);
         gfx_text_wrap(x + 50, y + 230, 21, 0xffffffa0,
-                      "Nothing was left half-written on the HDD. If the drive refused the disc, \"Use multiMAN\" in the disc pop-up is the other way to do it. The log has the details.", w - 100, 3);
+                      "Nothing was left half-written on the HDD. Clean the disc and try again - the log has the details.", w - 100, 3);
     }
 }
 

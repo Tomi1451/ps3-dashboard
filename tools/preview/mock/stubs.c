@@ -59,7 +59,6 @@ const Texture *covers_get(const Game *g)
 int launch_game(const Game *g) { return 1; }
 int launch_path(const char *p) { return 1; }
 int unmount_disc(void) { return 1; }
-int open_multiman(void) { return 1; }
 const Texture *backdrop_get(const char *p) { return NULL; }
 Game *library_find(const char *path) { int p, i; for (p = 0; p < PLAT_COUNT; p++) for (i = 0; i < library[p].count; i++) if (!strcmp(library[p].games[i].path, path)) return &library[p].games[i]; return NULL; }
 #include "../../../source/lists.h"
