@@ -319,6 +319,8 @@ static float wave_y(float x, float phase, float off)
     return 770.0f + off + 62.0f * sinf(x * 0.0029f + phase) + 26.0f * sinf(x * 0.0012f - phase * 0.7f + off * 0.05f);
 }
 
+static void draw_particles(float phase);
+
 void gfx_background_parts(float phase, int parts)
 {
     int i, j;
@@ -359,6 +361,8 @@ void gfx_background_parts(float phase, int parts)
         }
     }
 
+    if (parts & 8) draw_particles(phase);
+
     if (parts & 4) {            /* fine lines as thin quads */
         for (j = 0; j < 7; j++) {
             u32 c = gfx_accent(40 + 10 * (3 - abs(j - 3)));
@@ -375,9 +379,71 @@ void gfx_background_parts(float phase, int parts)
     }
 }
 
+/* ------------------------------------------------------------------ floating circles
+   Like the PS3 home screen: little sparkles riding along the wave and big soft "bokeh"
+   circles drifting slowly upwards. Positions are worked out from the time, nothing stored. */
+static float hash01(int i, int k)            /* fixed pseudo-random 0..1 per particle */
+{
+    u32 h = (u32) i * 374761393u + (u32) k * 668265263u;
+    h = (h ^ (h >> 13)) * 1274126177u;
+    return (float) ((h ^ (h >> 16)) & 0xffff) / 65535.0f;
+}
+
+/* soft circle: bright centre fading to nothing at the rim, drawn as a fan of quads */
+static void soft_circle(float cx, float cy, float r, u32 rgb, int alpha)
+{
+    const int N = 16;
+    u32 c0 = (rgb & 0xffffff00) | (u32) alpha, c1 = (rgb & 0xffffff00) | (u32) (alpha * 0.55f), c2 = rgb & 0xffffff00;
+    float rm = r * 0.45f;
+    int k;
+    tiny3d_SetPolygon(TINY3D_QUADS);
+    for (k = 0; k < N; k++) {
+        float a0 = k * 6.2831853f / N, a1 = (k + 1) * 6.2831853f / N;
+        float s0 = sinf(a0), c0s = cosf(a0), s1 = sinf(a1), c1s = cosf(a1);
+        /* inner disc */
+        tiny3d_VertexPos(cx, cy, 1000);                          tiny3d_VertexColor(c0);
+        tiny3d_VertexPos(cx, cy, 1000);                          tiny3d_VertexColor(c0);
+        tiny3d_VertexPos(cx + c1s * rm, cy + s1 * rm, 1000);     tiny3d_VertexColor(c1);
+        tiny3d_VertexPos(cx + c0s * rm, cy + s0 * rm, 1000);     tiny3d_VertexColor(c1);
+        /* soft edge */
+        tiny3d_VertexPos(cx + c0s * rm, cy + s0 * rm, 1000);     tiny3d_VertexColor(c1);
+        tiny3d_VertexPos(cx + c1s * rm, cy + s1 * rm, 1000);     tiny3d_VertexColor(c1);
+        tiny3d_VertexPos(cx + c1s * r, cy + s1 * r, 1000);       tiny3d_VertexColor(c2);
+        tiny3d_VertexPos(cx + c0s * r, cy + s0 * r, 1000);       tiny3d_VertexColor(c2);
+    }
+    tiny3d_End();
+}
+
+static void draw_particles(float phase)
+{
+    int i;
+    u32 tint = gfx_accent(0xff) | 0xff;
+    /* big soft circles, slowly rising and swaying */
+    for (i = 0; i < 12; i++) {
+        float r = 40 + 100 * hash01(i, 1);
+        float speed = 9 + 14 * hash01(i, 2);                     /* px per phase unit */
+        float span = SCREEN_H + 2 * r + 200;
+        float y = SCREEN_H + r - fmodf(hash01(i, 3) * span + phase * speed, span);
+        float x = hash01(i, 4) * SCREEN_W + 70 * sinf(phase * 0.35f + i * 1.3f);
+        int a = (int) (26 + 30 * hash01(i, 5));
+        float edge = fminf(1.0f, fminf(y + r, SCREEN_H + r - y) / 300.0f);     /* fade in / out */
+        if (edge > 0) soft_circle(x, y, r, tint, (int) (a * edge));
+    }
+    /* sparkles along the wave */
+    for (i = 0; i < 26; i++) {
+        float speed = 20 + 40 * hash01(i, 6);
+        float span = SCREEN_W + 120;
+        float x = fmodf(hash01(i, 7) * span + phase * speed, span) - 60;
+        float y = wave_y(x, phase, 14) + (hash01(i, 8) - 0.5f) * 150 + 12 * sinf(phase * 1.7f + i);
+        float twinkle = 0.45f + 0.55f * sinf(phase * 2.6f + i * 1.9f);
+        float r = 4 + 6 * hash01(i, 9);
+        if (twinkle > 0.05f) soft_circle(x, y, r * 2.2f, 0xffffffff, (int) (150 * twinkle));
+    }
+}
+
 void gfx_background(float phase)
 {
-    gfx_background_parts(phase, wave_on ? 7 : 1);
+    gfx_background_parts(phase, wave_on == 0 ? 1 : wave_on == 1 ? 7 : 15);
 }
 
 /* ------------------------------------------------------------------ text */

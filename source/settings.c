@@ -11,13 +11,13 @@
 
 #define SETTINGS_FILE "/dev_hdd0/game/PSDB00001/USRDIR/settings.txt"
 
-const Settings settings_defaults = { 0, 2, 1, 0, 1, 1, 0, 0, 0, 1 };
-Settings settings = { 0, 2, 1, 0, 1, 1, 0, 0, 0, 1 };
+const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1 };
+Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1 };
 
 static const struct { const char *key; int *v; int lo, hi; } keys[] = {
     { "theme=",      &settings.theme,      0, 99 },
     { "brightness=", &settings.brightness, 0, 4 },
-    { "wave=",       &settings.wave,       0, 1 },
+    { "wave=",       &settings.wave,       0, 2 },
     { "font=",       &settings.font,       0, 99 },
     { "cover_size=", &settings.cover_size, 0, 2 },
     { "titles=",     &settings.titles,     0, 1 },

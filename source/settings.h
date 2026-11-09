@@ -5,7 +5,7 @@
 typedef struct {
     int theme;        /* background colour (gfx theme index) */
     int brightness;   /* 0..4, 2 = normal */
-    int wave;         /* 1 = animated wave on */
+    int wave;         /* background effects: 0 off, 1 wave, 2 wave + floating circles */
     int font;         /* gfx font index */
     int cover_size;   /* 0 small (8 a row), 1 medium (7), 2 large (5) */
     int titles;       /* 1 = names under the covers */

@@ -35,8 +35,19 @@ def main(frame_path, out_png, glyph_path):
             gy = np.linspace(0, 1, h)[:, None, None]; gx = np.linspace(0, 1, w)[None, :, None]
             top = cs[0] * (1 - gx) + cs[1] * gx; bot = cs[3] * (1 - gx) + cs[2] * gx
             c = top * (1 - gy) + bot * gy
-        else:
-            c = np.ones((h, w, 4), np.float32) * cs.mean(0)
+        else:   # general quad: colour interpolated over its two triangles (v0 v1 v2) and (v0 v2 v3)
+            c = np.zeros((h, w, 4), np.float32)
+            py, px = np.mgrid[0:h, 0:w].astype(np.float32); px += x0 + 0.5; py += y0 + 0.5
+            for a, b, d in ((0, 1, 2), (0, 2, 3)):
+                (ax, ay), (bx, by), (dx, dy) = [(vs[k][0], vs[k][1]) for k in (a, b, d)]
+                den = (by - dy) * (ax - dx) + (dx - bx) * (ay - dy)
+                if abs(den) < 1e-6: continue
+                l1 = ((by - dy) * (px - dx) + (dx - bx) * (py - dy)) / den
+                l2 = ((dy - ay) * (px - dx) + (ax - dx) * (py - dy)) / den
+                l3 = 1 - l1 - l2
+                inside = (l1 >= -0.01) & (l2 >= -0.01) & (l3 >= -0.01)
+                ci = l1[..., None] * cs[a] + l2[..., None] * cs[b] + l3[..., None] * cs[d]
+                c[inside] = ci[inside]
         if tex is not None and tex >= 100000:   # cover stand-in: draw a labelled image
             key = (tex, w, h)
             if key not in cover_cache:

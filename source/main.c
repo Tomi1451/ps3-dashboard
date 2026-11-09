@@ -20,7 +20,7 @@
 #include "disc.h"
 #include "settings.h"
 
-#define APP_VERSION "v0.14"
+#define APP_VERSION "v0.15"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -335,7 +335,7 @@ static const struct { int id; const char *label; const char *help; } set_items[]
     { S_HEADER, "APPEARANCE", NULL },
     { S_THEME,  "Background colour", "PlayStation colours: the PS3 XMB blue, the PlayStation logo colours, the face-button colours and the console finishes." },
     { S_BRIGHT, "Background brightness", "How bright the background is." },
-    { S_WAVE,   "Wave animation", "The moving XMB-style wave along the bottom of the screen." },
+    { S_WAVE,   "Background animation", "Like the PS3 home screen: the moving wave, plus sparkles and soft circles floating past." },
     { S_FONT,   "Font", "The PS3's own system fonts. Fonts your firmware doesn't have are skipped." },
     { S_HEADER, "LIBRARY", NULL },
     { S_SIZE,   "Cover size", "Small fits 8 covers a row, Medium 7 and Large 5." },
@@ -361,7 +361,7 @@ static const char *set_value(int id, char *buf, size_t n)
     switch (id) {
         case S_THEME:  return gfx_theme_name(settings.theme);
         case S_BRIGHT: return bnames[settings.brightness];
-        case S_WAVE:   return settings.wave ? "On" : "Off";
+        case S_WAVE:   return settings.wave == 2 ? "Wave + circles" : settings.wave == 1 ? "Wave only" : "Off";
         case S_FONT:   return gfx_font_name(settings.font);
         case S_SIZE:   return sizes[settings.cover_size];
         case S_TITLES: return settings.titles ? "Show" : "Hide";
@@ -469,7 +469,7 @@ static void settings_change(int d, int pressed_x)
     switch (id) {
         case S_THEME:  n = gfx_theme_count(); settings.theme = (settings.theme + d + n) % n; break;
         case S_BRIGHT: if (settings.brightness + d < 0 || settings.brightness + d > 4) return; settings.brightness += d; break;
-        case S_WAVE:   settings.wave = !settings.wave; break;
+        case S_WAVE:   settings.wave = (settings.wave + d + 3) % 3; break;
         case S_FONT:   /* next font the firmware actually has */
             n = gfx_font_count();
             for (i = 0, n = gfx_font_count(); i < n; i++) {
