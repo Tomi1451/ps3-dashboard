@@ -24,6 +24,7 @@
 #include "lists.h"
 #include "sysinfo.h"
 #include "sound.h"
+#include <sys/process.h>
 #include <lv2/process.h>
 #include <lv2/sysfs.h>
 #include <strings.h>
