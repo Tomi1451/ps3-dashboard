@@ -27,6 +27,7 @@
 #include <sys/process.h>
 #include <lv2/process.h>
 #include <lv2/sysfs.h>
+#include <sys/file.h>
 #include <strings.h>
 
 #define APP_VERSION "v0.18"

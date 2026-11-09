@@ -11,6 +11,12 @@
 static char text[96];
 static int  frame = 0, temps_ok = 1;
 
+static int disk_free(const char *path, u64 *total, u64 *avail)   /* syscall 840, as webMAN does */
+{
+    lv2syscall3(840, (u64)(u32) path, (u64)(u32) total, (u64)(u32) avail);
+    return_to_user_prog(int);
+}
+
 static int get_temp(u32 sensor, u32 *t)
 {
     lv2syscall2(383, sensor, (u64)(u32) t);
@@ -20,12 +26,12 @@ static int get_temp(u32 sensor, u32 *t)
 void sysinfo_poll(void)
 {
     if (frame++ % 300) return;                  /* every ~5 seconds */
-    u32 bs = 0; u64 blocks = 0, cpu = 0, rsx = 0;
+    u64 total = 0, avail = 0, cpu = 0, rsx = 0;
     u32 t;
     int n = 0;
     text[0] = 0;
-    if (sysFsGetFreeSize("/dev_hdd0", &bs, &blocks) == 0 && bs) {
-        double gb = (double) blocks * bs / (1024.0 * 1024.0 * 1024.0);
+    if (disk_free("/dev_hdd0", &total, &avail) == 0 && total) {
+        double gb = (double) avail / (1024.0 * 1024.0 * 1024.0);
         n += snprintf(text + n, sizeof(text) - n, "%.1f GB free", gb);
     }
     if (temps_ok) {
