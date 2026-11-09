@@ -99,3 +99,11 @@ int unmount_disc(void)
 {
     return webman_send("/mount.ps3/unmount");
 }
+
+/* multiMAN, started the way the XMB starts it (webMAN puts it on the app_home icon and
+   presses it), after we exit and the XMB has loaded. Unmounts any game image first so
+   multiMAN sees the real disc in the drive. */
+int open_multiman(void)
+{
+    return webman_send("/mount.ps3/unmount;/wait.ps3?xmb;/wait.ps3?3;/play.ps3?multiman");
+}

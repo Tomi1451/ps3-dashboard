@@ -30,7 +30,7 @@
 #include <sys/file.h>
 #include <strings.h>
 
-#define APP_VERSION "v0.18"
+#define APP_VERSION "v0.19"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -1039,17 +1039,16 @@ static void disc_action(void)
         log_step("disc: play");
         ok = launch_disc();
     } else if (disc.type != DISC_PS3) {
-        /* PS1 / PS2: hand over to multiMAN, which can read and image these discs */
+        /* PS1 / PS2: hand over to multiMAN, which can read and image these discs.
+           Started through webMAN like an XMB icon - starting its EBOOT directly
+           from here just dropped back to the XMB. */
         gfx_begin(); gfx_background(anim * 0.2f);
-        draw_message("Opening multiMAN", "In multiMAN: switch to mmCM mode, select the disc and choose Create ISO. Then come back and use Settings > Rescan library.");
+        draw_message("Opening multiMAN", "multiMAN opens by itself once the XMB has loaded. Then: switch to mmCM mode, select the disc and choose Create ISO. Afterwards use Settings > Rescan library here.");
         gfx_end();
-        unmount_disc();                       /* so multiMAN sees the real disc, not a mounted image */
-        sleep(3);
-        sound_shutdown();
-        log_step("disc: opening multiMAN to make an ISO");
-        sysProcessExitSpawn2(MULTIMAN_EBOOT, NULL, NULL, NULL, 0, 1001, SYS_PROCESS_SPAWN_STACK_SIZE_1M);
-        log_step("multiMAN did not start");
-        mode = 0;
+        log_step("disc: opening multiMAN through webMAN");
+        if (open_multiman()) { sleep(4); leave_app(); }
+        log_step("webMAN not reachable");
+        mode = 2;
         return;
     } else {
         /* folder name: "<title> [<ID>]" with characters the HDD can't take removed */
