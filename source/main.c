@@ -24,13 +24,15 @@
 #include "lists.h"
 #include "sysinfo.h"
 #include "sound.h"
+#include "rip.h"
+#include <sys/systime.h>
 #include <sys/process.h>
 #include <lv2/process.h>
 #include <lv2/sysfs.h>
 #include <sys/file.h>
 #include <strings.h>
 
-#define APP_VERSION "v0.19"
+#define APP_VERSION "v0.20"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -541,7 +543,10 @@ static int letter_jump(int from, int dir)
 }
 
 /* ---------------------------------------------------------------- search keyboard */
-static const char *kb_rows[] = { "ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZ0123", "456789" };
+static const char *kb_rows[] = { "ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZ0123", "456789-'&!" };
+static int kb_purpose = 0;          /* 0 search, 1 naming a disc image */
+static char rip_name[64] = "";
+static void rip_start(void);
 static const char *kb_keys[] = { "Space", "Delete", "Clear", "Done" };
 #define KB_ROWS 5
 
@@ -555,14 +560,20 @@ static void draw_keyboard(void)
     gfx_rect_v(px, py, pw, ph, gfx_theme_col(1, 0xff), gfx_theme_col(2, 0xff));
     gfx_frame(px, py, pw, ph, 1, 0xffffff40);
     gfx_rect(px, py, pw, 4, gfx_accent(0xff));
-    gfx_text(px + 35, py + 26, 30, 0xffffffff, "Search");
+    gfx_text(px + 35, py + 26, 30, 0xffffffff, kb_purpose ? "Name this game" : "Search");
+    if (kb_purpose && disc.id[0]) {
+        char b[64]; snprintf(b, sizeof(b), "[%s] is added to the name for you", disc.id);
+        gfx_text(px + pw - 35 - gfx_text_w(18, b), py + 36, 18, 0xffffff90, b);
+    }
     /* the text so far */
     gfx_rect(px + 35, py + 76, pw - 70, 56, 0x00000060);
     gfx_frame(px + 35, py + 76, pw - 70, 56, 1, 0xffffff40);
     {
-        float tx = gfx_text(px + 50, py + 88, 30, 0xffffffff, query);
+        const char *txt = kb_purpose ? rip_name : query;
+        float tx = gfx_text(px + 50, py + 88, 30, 0xffffffff, txt);
         if (((int) (anim * 2)) & 1) gfx_rect(tx + 2, py + 88, 3, 32, 0xffffffd0);
-        char b[48]; snprintf(b, sizeof(b), "%d found", vn);
+        char b[48];
+        if (kb_purpose) snprintf(b, sizeof(b), "%s", disc_name(disc.type)); else snprintf(b, sizeof(b), "%d found", vn);
         gfx_text(px + pw - 50 - gfx_text_w(20, b), py + 94, 20, 0xffffff90, b);
     }
     for (r = 0; r < KB_ROWS; r++) {
@@ -574,7 +585,7 @@ static void draw_keyboard(void)
             gfx_rect(x, y, w, kh, on ? 0xffffff40 : 0xffffff12);
             gfx_frame(x, y, w, kh, on ? 2 : 1, on ? 0xffffffe0 : 0xffffff30);
             if (r < 4) { char k[2] = { kb_rows[r][c], 0 }; gfx_text_center(x + w / 2, y + 18, 34, 0xffffffff, k); }
-            else gfx_text_center(x + w / 2, y + 22, 26, 0xffffffff, kb_keys[c]);
+            else gfx_text_center(x + w / 2, y + 22, 26, 0xffffffff, (c == 3 && kb_purpose) ? "Make ISO" : kb_keys[c]);
         }
     }
 }
@@ -590,18 +601,30 @@ static void keyboard_input(void)
         if (kb_col >= m) kb_col = m - 1;
         sound_play(SND_MOVE);
     }
-    size_t len = strlen(query);
+    char *txt = kb_purpose ? rip_name : query;
+    size_t cap = kb_purpose ? sizeof(rip_name) : sizeof(query);
+    size_t len = strlen(txt);
     int changed = 0;
     if (pad_pressed & B_CROSS) {
-        if (kb_row < 4) { if (len < sizeof(query) - 1) { query[len] = kb_rows[kb_row][kb_col]; query[len + 1] = 0; changed = 1; } }
-        else if (kb_col == 0) { if (len && len < sizeof(query) - 1) { query[len] = ' '; query[len + 1] = 0; changed = 1; } }
-        else if (kb_col == 1) { if (len) { query[len - 1] = 0; changed = 1; } }
-        else if (kb_col == 2) { query[0] = 0; changed = 1; }
-        else { mode = 0; sound_play(SND_OK); }
+        if (kb_row < 4) {
+            if (len < cap - 1) {
+                char c = kb_rows[kb_row][kb_col];
+                /* names: Title Case as you type (searching ignores case anyway) */
+                if (kb_purpose && len && txt[len - 1] != ' ' && c >= 'A' && c <= 'Z') c += 32;
+                txt[len] = c; txt[len + 1] = 0; changed = 1;
+            }
+        }
+        else if (kb_col == 0) { if (len && len < cap - 1) { txt[len] = ' '; txt[len + 1] = 0; changed = 1; } }
+        else if (kb_col == 1) { if (len) { txt[len - 1] = 0; changed = 1; } }
+        else if (kb_col == 2) { txt[0] = 0; changed = 1; }
+        else { mode = 0; sound_play(SND_OK); if (kb_purpose) { rip_start(); return; } }
     }
-    if (pad_pressed & B_SQUARE) { if (len) { query[len - 1] = 0; changed = 1; } }     /* quick delete */
+    if (pad_pressed & B_SQUARE) { if (len) { txt[len - 1] = 0; changed = 1; } }     /* quick delete */
     if (pad_pressed & (B_CIRCLE | B_START | B_L3)) { mode = 0; sound_play(SND_BACK); }
-    if (changed) { sel[plat] = 0; top_row[plat] = 0; view_build(); sound_play(SND_MOVE); }
+    if (changed) {
+        sound_play(SND_MOVE);
+        if (!kb_purpose) { sel[plat] = 0; top_row[plat] = 0; view_build(); }
+    }
 }
 
 static void fact(float x, float y, const char *label, const char *value, float max_w)
@@ -909,15 +932,18 @@ static void draw_footer_band(void)
 static void draw_hints(void)
 {
     float x = MARGIN_X, y = FOOTER_Y + 40;
-    if (!show_settings && mode != 4) draw_footer_band();   /* windows dim everything themselves */
+    if (!show_settings && mode != 4 && mode != 7) draw_footer_band();   /* windows dim everything themselves */
     if (show_settings) {
         x = hint_pill(x, y, "UP / DOWN", "Choose");
         x = hint_pill(x, y, "LEFT / RIGHT", "Change");
         x = hint(x, y, 'o', "Close");
+    } else if (mode == 7) {
+        if (rip_active()) x = hint(x, y, 'o', "Stop");
+        else x = hint(x, y, 'x', "OK");
     } else if (mode == 4) {
         x = hint(x, y, 'x', "Type");
         x = hint(x, y, 's', "Delete");
-        x = hint(x, y, 'o', "Done");
+        x = hint(x, y, 'o', kb_purpose ? "Cancel" : "Done");
     } else if (mode == 3 || mode == 5) {
         x = hint(x, y, 'x', "Select");
         x = hint(x, y, 'o', mode == 3 ? "Not now" : "Back");
@@ -995,7 +1021,8 @@ static void draw_disc_picker(void)
 
 #define MULTIMAN_EBOOT "/dev_hdd0/game/BLES80608/USRDIR/EBOOT.BIN"
 static int have_multiman(void) { sysFSStat st; return sysLv2FsStat(MULTIMAN_EBOOT, &st) == 0; }
-static int disc_can_install(void) { return disc.type == DISC_PS3 || ((disc.type == DISC_PS1 || disc.type == DISC_PS2) && have_multiman()); }
+static int disc_can_install(void) { return disc.type == DISC_PS3 || disc.type == DISC_PS1 || disc.type == DISC_PS2; }
+static int disc_choices(void) { return disc.type == DISC_PS3 ? 2 : (disc.type == DISC_PS1 || disc.type == DISC_PS2) ? (have_multiman() ? 3 : 2) : 1; }
 
 static void draw_disc_popup(void)
 {
@@ -1010,11 +1037,11 @@ static void draw_disc_popup(void)
     else snprintf(line, sizeof(line), "%s", disc.id[0] ? disc.id : "Game ID not readable yet");
     gfx_text_fit(x + 60, y + 144, 24, 0xffffffb0, line, w - 120);
 
-    const char *labels[2] = { "Play", disc.type == DISC_PS3 ? "Install to HDD" : "Make ISO" };
+    const char *labels[3] = { "Play", disc.type == DISC_PS3 ? "Install to HDD" : "Make ISO", "Use multiMAN" };
     int i;
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < disc_choices(); i++) {
         float bx = x + 60 + i * 300, by = y + 210, bw = 270, bh = 70;
-        int on = (disc_choice == i), ok = (i == 0 || disc_can_install());
+        int on = (disc_choice == i), ok = 1;
         gfx_rect(bx, by, bw, bh, on ? 0xffffff30 : 0xffffff10);
         gfx_frame(bx, by, bw, bh, on ? 2 : 1, on ? 0xffffffd0 : 0xffffff30);
         gfx_text_center(bx + bw / 2, by + 20, 28, ok ? 0xffffffff : 0xffffff50, labels[i]);
@@ -1022,9 +1049,9 @@ static void draw_disc_popup(void)
     const char *note =
         disc_choice == 0 ? "Starts the disc from the XMB once the dashboard has closed." :
         disc.type == DISC_PS3 ? "webMAN copies the disc to /dev_hdd0/GAMES on the XMB and tells you when it's finished. It then appears in your PS3 library." :
-        "Opens multiMAN. Switch it to mmCM mode, pick the disc and choose Create ISO - multiMAN reads PlayStation discs properly. Then Rescan library here.";
-    if (disc_choice == 0 && !disc_can_install() && disc.type != DISC_PS3)
-        note = "Starts the disc from the XMB once the dashboard has closed.  To make an ISO of this disc, install multiMAN (it has a Create ISO option).";
+        disc_choice == 1 ? (disc.type == DISC_PS1 ? "Copies the whole disc - video, music and CD audio tracks included - to PSXISO as a BIN + CUE, right here. You name it first." :
+                                                    "Copies the disc to PS2ISO as an ISO, right here. You name it first.") :
+        "Opens multiMAN instead (mmCM mode > Create ISO), if you'd rather use that.";
     gfx_text_wrap(x + 60, y + 310, 22, 0xffffffc0, note, w - 120, 3);
 }
 
@@ -1032,14 +1059,17 @@ static void disc_action(void)
 {
     char line[220], target[300], name[120];
     int ok;
-    if (disc_choice == 1 && !disc_can_install()) return;
+    if (disc_choice == 1 && disc.type != DISC_PS3) {          /* Make ISO, in the dashboard */
+        rip_name[0] = 0; kb_purpose = 1; kb_row = kb_col = 0; mode = 4;
+        return;
+    }
     if (disc_choice == 0) {
         snprintf(line, sizeof(line), "Starting %s ...  It opens by itself once the XMB has loaded - don't press any buttons.", disc.title[0] ? disc.title : disc_name(disc.type));
         gfx_begin(); gfx_background(anim * 0.2f); draw_message("Loading disc", line); gfx_end();
         log_step("disc: play");
         ok = launch_disc();
     } else if (disc.type != DISC_PS3) {
-        /* PS1 / PS2: hand over to multiMAN, which can read and image these discs.
+        /* "Use multiMAN": hand over to multiMAN, which can read and image these discs.
            Started through webMAN like an XMB icon - starting its EBOOT directly
            from here just dropped back to the XMB. */
         gfx_begin(); gfx_background(anim * 0.2f);
@@ -1099,6 +1129,88 @@ static void rescan_library(void)
     for (p = 0; p < PLAT_COUNT; p++) { if (sel[p] >= library[p].count) sel[p] = 0; top_row[p] = 0; }
     view_build(); home_build();
     log_step("rescan: PS1 %d, PS2 %d, PS3 %d", library[0].count, library[1].count, library[2].count);
+}
+
+/* ---------------------------------------------------------------- Make ISO */
+static u64 rip_t0 = 0;
+static u64 now_ms(void) { u64 sec = 0, ns = 0; sysGetCurrentTime(&sec, &ns); return sec * 1000 + ns / 1000000; }
+
+static void rip_start(void)
+{
+    gfx_begin(); gfx_background(anim * 0.2f); draw_message("Getting the disc ready", "Making sure nothing else is using the drive..."); gfx_end();
+    unmount_disc();                              /* a mounted game image would hide the real disc */
+    sleep(2);
+    if (!rip_begin(disc.type == DISC_PS1 ? RIP_PS1 : RIP_PS2, rip_name, disc.id)) { mode = 7; return; }
+    rip_t0 = now_ms();
+    mode = 7;
+}
+
+static void draw_rip(void)
+{
+    char b[200];
+    float w = 1100, h = 420, x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2 - 20;
+    gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0xc8));
+    gfx_rect_v(x, y, w, h, gfx_theme_col(1, 0xff), gfx_theme_col(2, 0xff));
+    gfx_frame(x, y, w, h, 1, 0xffffff40);
+    gfx_rect(x, y, w, 4, gfx_accent(0xff));
+    if (rip_active()) {
+        float p = rip_progress();
+        u64 ms = now_ms() - rip_t0;
+        double done = rip_bytes_done() / 1048576.0, total = rip_bytes_total() / 1048576.0;
+        double speed = ms > 500 ? done / (ms / 1000.0) : 0;
+        gfx_text(x + 50, y + 40, 20, 0xffffff8c, "MAKING ISO");
+        gfx_text_fit(x + 50, y + 74, 40, 0xffffffff, rip_message(), w - 100);
+        gfx_rect(x + 50, y + 170, w - 100, 30, 0x00000070);
+        gfx_rect(x + 50, y + 170, (w - 100) * p, 30, gfx_accent(0xe0));
+        gfx_frame(x + 50, y + 170, w - 100, 30, 1, 0xffffff40);
+        snprintf(b, sizeof(b), "%d%%   \xB7   %.0f of %.0f MB", (int) (p * 100), done, total);
+        gfx_text(x + 50, y + 224, 26, 0xffffffe0, b);
+        if (speed > 0.05) {
+            int left = (int) ((total - done) / speed);
+            snprintf(b, sizeof(b), "%.1f MB/s   \xB7   about %d:%02d left", speed, left / 60, left % 60);
+            gfx_text(x + w - 50 - gfx_text_w(22, b), y + 228, 22, 0xffffffa0, b);
+        }
+        gfx_text_wrap(x + 50, y + 300, 21, 0xffffff90, "Leave the disc in and don't turn the console off. Press CIRCLE to stop - the unfinished file is removed.", w - 100, 2);
+    } else if (rip_done()) {
+        gfx_text(x + 50, y + 40, 20, 0xffffff8c, "FINISHED");
+        gfx_text_fit(x + 50, y + 74, 40, 0xffffffff, rip_message(), w - 100);
+        gfx_text_wrap(x + 50, y + 150, 22, 0xffffffd0, rip_output(), w - 100, 2);
+        gfx_text_wrap(x + 50, y + 230, 22, 0xffffffb0, "It's now in your library. Press X to go to it. Run the PC tools again to add its cover and game info.", w - 100, 3);
+    } else {
+        gfx_text(x + 50, y + 40, 20, 0xffffff8c, "COULDN'T MAKE THE ISO");
+        gfx_text_wrap(x + 50, y + 80, 26, 0xffffffff, rip_message(), w - 100, 3);
+        gfx_text_wrap(x + 50, y + 230, 21, 0xffffffa0,
+                      "Nothing was left half-written on the HDD. If the drive refused the disc, \"Use multiMAN\" in the disc pop-up is the other way to do it. The log has the details.", w - 100, 3);
+    }
+}
+
+static void rescan_library(void);
+
+static void rip_input(void)
+{
+    if (rip_active()) {
+        if (pad_pressed & B_CIRCLE) { rip_cancel(); sound_play(SND_BACK); return; }
+        rip_step();
+        if (disc.type == DISC_PS2 && rip_active()) rip_step();     /* DVDs read faster */
+        if (rip_done()) sound_play(SND_STAR);
+        return;
+    }
+    if (pad_pressed & (B_CROSS | B_CIRCLE)) {
+        if (rip_done()) {                                         /* show the new game */
+            const char *out = rip_output();
+            rescan_library();
+            int t, i;
+            for (t = 0; t < PLAT_COUNT; t++)
+                for (i = 0; i < library[t].count; i++)
+                    if (!strcmp(library[t].games[i].path, out)) {
+                        set_tab(t + 1);
+                        for (i = 0; i < vn; i++) if (!strcmp(vlist[i]->path, out)) sel[plat] = i;
+                        t = PLAT_COUNT; break;
+                    }
+        }
+        mode = 0;
+        sound_play(SND_OK);
+    }
 }
 
 /* moving the selection on a console tab, for the current view */
@@ -1178,16 +1290,18 @@ s32 main(s32 argc, const char *argv[])
         if (settings.sysinfo) sysinfo_poll();
         anim += 0.06f;
 
-        if (mode != 3 && mode != 4 && mode != 5 && !show_settings && disc_poll(&disc) && settings.disc_popup) {
+        if (mode != 3 && mode != 4 && mode != 5 && mode != 7 && !show_settings && disc_poll(&disc) && settings.disc_popup) {
             prev_mode = (mode == 2) ? 0 : mode; mode = 3; disc_choice = 0; sound_play(SND_TAB);
         }
 
         Game *g = cur_game();
         if (mode == 3) {
-            if ((pad_pressed & B_LEFT) && disc_choice) { disc_choice = 0; sound_play(SND_MOVE); }
-            if ((pad_pressed & B_RIGHT) && disc_can_install() && !disc_choice) { disc_choice = 1; sound_play(SND_MOVE); }
+            if ((pad_pressed & B_LEFT) && disc_choice > 0) { disc_choice--; sound_play(SND_MOVE); }
+            if ((pad_pressed & B_RIGHT) && disc_choice + 1 < disc_choices()) { disc_choice++; sound_play(SND_MOVE); }
             if (pad_pressed & B_CIRCLE) { mode = prev_mode; sound_play(SND_BACK); }
             else if (pad_pressed & B_CROSS) disc_action();
+        } else if (mode == 7) {
+            rip_input();
         } else if (mode == 4) {
             keyboard_input();
         } else if (mode == 5) {
@@ -1212,7 +1326,7 @@ s32 main(s32 argc, const char *argv[])
             if (pad_pressed & B_SELECT) { show_settings = 1; if (!set_selectable(set_row)) set_row = 1; sound_play(SND_TAB); }
             if (ON_HOME) home_move(); else {
                 browse_move();
-                if (pad_pressed & B_L3) { mode = 4; kb_row = kb_col = 0; sound_play(SND_TAB); }
+                if (pad_pressed & B_L3) { mode = 4; kb_purpose = 0; kb_row = kb_col = 0; sound_play(SND_TAB); }
                 if (pad_pressed & B_R3) { settings.view = (settings.view + 1) % 3; top_row[plat] = 0; settings_save(); sound_play(SND_TAB); }
             }
             g = cur_game();
@@ -1240,6 +1354,7 @@ s32 main(s32 argc, const char *argv[])
         if (mode == 3) draw_disc_popup();
         if (mode == 4) draw_keyboard();
         if (mode == 5) draw_disc_picker();
+        if (mode == 7) draw_rip();
         if (show_settings) draw_settings_window();
         draw_hints();
         if (mode == 2) draw_message("webMAN MOD isn't responding",

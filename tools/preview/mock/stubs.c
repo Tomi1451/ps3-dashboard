@@ -86,7 +86,7 @@ int disc_poll(DiscInfo *d)
     if (!e || ++f != 3) return 0;
     memset(d, 0, sizeof(*d)); d->type = atoi(e);
     if (d->type == DISC_PS3) { strcpy(d->title, "Gran Turismo 5"); strcpy(d->id, "BCES00569"); }
-    else strcpy(d->id, d->type == DISC_PS1 ? "SCES-00984" : "SLES-50330");
+    else strcpy(d->id, d->type == DISC_PS1 ? "SCES-00311" : "SLES-50330");
     return 1;
 }
 #include "../../../source/settings.h"
@@ -109,3 +109,16 @@ const GameInfo *info_get(const Game *g)
     return &gi;
 }
 void info_forget(void) {}
+#include "../../../source/rip.h"
+static int rip_state = 0; static float rip_p = 0;
+int rip_begin(int t, const char *n, const char *id) { rip_state = 1; rip_p = 0.37f; return 1; }
+int rip_step(void) { return 1; }
+void rip_cancel(void) { rip_state = 3; }
+int rip_active(void) { return rip_state == 1; }
+int rip_done(void) { return rip_state == 2; }
+int rip_failed(void) { return rip_state == 3; }
+float rip_progress(void) { return rip_p; }
+u64 rip_bytes_done(void) { return 271ULL << 20; }
+u64 rip_bytes_total(void) { return 734ULL << 20; }
+const char *rip_message(void) { return "Medievil [SCES-00311]"; }
+const char *rip_output(void) { return "/dev_hdd0/PSXISO/Medievil [SCES-00311]/Medievil [SCES-00311].bin"; }
