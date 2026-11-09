@@ -18,7 +18,7 @@ static void add(int p, const char *t, const char *id, const char *path, int fmt,
     GameList *l = &library[p];
     if (l->count == l->cap) { l->cap = l->cap ? l->cap * 2 : 64; l->games = realloc(l->games, l->cap * sizeof(Game)); }
     Game *g = &l->games[l->count++]; memset(g, 0, sizeof(*g));
-    g->plat = p; g->format = fmt;
+    g->plat = p; g->format = fmt; strcpy(g->where, "HDD");
     strcpy(g->title, t); strcpy(g->id, id); strcpy(g->region, strstr(path, "PAL") ? "PAL" : (id[0] ? "PAL" : "")); strcpy(g->path, path); strcpy(g->cover, cover ? cover : "");
 }
 void library_scan(void)
@@ -57,6 +57,21 @@ const Texture *covers_get(const Game *g)
     return t;
 }
 int launch_game(const Game *g) { return 1; }
+int launch_path(const char *p) { return 1; }
+int unmount_disc(void) { return 1; }
+const Texture *backdrop_get(const char *p) { return NULL; }
+Game *library_find(const char *path) { int p, i; for (p = 0; p < PLAT_COUNT; p++) for (i = 0; i < library[p].count; i++) if (!strcmp(library[p].games[i].path, path)) return &library[p].games[i]; return NULL; }
+#include "../../../source/lists.h"
+#include "../../../source/sysinfo.h"
+#include "../../../source/sound.h"
+void lists_load(void) { if (getenv("PREVIEW_FAVS")) { library[0].games[2].fav = library[0].games[5].fav = library[1].games[3].fav = 1; library[0].games[3].ndiscs = 2; strcpy(library[0].games[3].discs[0], "/dev_hdd0/PSXISO/A Bugs Life Disc 2.bin"); } }
+void fav_toggle(Game *g) { g->fav = !g->fav; }
+int fav_list(Game **o, int m) { int p, i, n = 0; for (p = 0; p < PLAT_COUNT; p++) for (i = 0; i < library[p].count && n < m; i++) if (library[p].games[i].fav) o[n++] = &library[p].games[i]; return n; }
+void recent_add(const Game *g) {}
+int recent_list(Game **o, int m) { if (!getenv("PREVIEW_FAVS")) return 0; o[0] = &library[2].games[0]; o[1] = &library[0].games[8]; o[2] = &library[1].games[1]; o[3] = &library[0].games[12]; return 4; }
+void sysinfo_poll(void) {}
+const char *sysinfo_text(void) { return "214.6 GB free   \xB7   CPU 61\xB0" "C  RSX 54\xB0" "C"; }
+void sound_enable(int on) {} void sound_play(int w) {} void sound_shutdown(void) {}
 void log_reset(void) {}
 void log_step(const char *fmt, ...) {}
 #include "../../../source/disc.h"
@@ -75,10 +90,10 @@ int disc_poll(DiscInfo *d)
 }
 #include "../../../source/settings.h"
 #include "../../../source/gfx.h"
-const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1 };
-Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1 };
+const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1 };
+Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1 };
 void settings_apply(void) { gfx_theme_set(settings.theme, settings.brightness, settings.wave); settings.font = gfx_font_set(settings.font); }
-void settings_load(void) { const char *t = getenv("PREVIEW_THEME"); if (t) settings.theme = atoi(t); t = getenv("PREVIEW_SIZE"); if (t) settings.cover_size = atoi(t); }
+void settings_load(void) { const char *t = getenv("PREVIEW_THEME"); if (t) settings.theme = atoi(t); t = getenv("PREVIEW_SIZE"); if (t) settings.cover_size = atoi(t); t = getenv("PREVIEW_VIEW"); if (t) settings.view = atoi(t); }
 void settings_save(void) {}
 void covers_reset(void) { ntex = 0; }
 #include "../../../source/info.h"

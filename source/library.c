@@ -15,6 +15,7 @@
 #define S_ISDIR_PS3(m) (((m) & 0170000) == 0040000)
 
 GameList library[PLAT_COUNT];
+static char cur_where[8] = "HDD";   /* device being scanned */
 
 const char *plat_name(int p)  { return p == PLAT_PS1 ? "PlayStation" : p == PLAT_PS2 ? "PlayStation 2" : "PlayStation 3"; }
 const char *plat_short(int p) { return p == PLAT_PS1 ? "PS1" : p == PLAT_PS2 ? "PS2" : "PS3"; }
@@ -59,6 +60,7 @@ static Game *add_game(int plat)
     Game *g = &l->games[l->count++];
     memset(g, 0, sizeof(*g));
     g->plat = plat;
+    strcpy(g->where, cur_where);
     return g;
 }
 
@@ -233,18 +235,110 @@ static int cmp_title(const void *a, const void *b)
     return strcasecmp(((const Game *) a)->title, ((const Game *) b)->title);
 }
 
+/* disc number from a name: "... Disc 2", "..._CD1", "(Disc 3 of 3)" -> 2 / 1 / 3, else 0 */
+static int disc_number(const char *name)
+{
+    const char *p;
+    for (p = name; *p; p++) {
+        int skip = 0;
+        if (!strncasecmp(p, "disc", 4)) skip = 4;
+        else if (!strncasecmp(p, "disk", 4)) skip = 4;
+        else if (!strncasecmp(p, "cd", 2) && (p == name || !isalpha((unsigned char) p[-1]))) skip = 2;
+        if (!skip) continue;
+        const char *q = p + skip;
+        while (*q == ' ' || *q == '_' || *q == '-' || *q == '.') q++;
+        if (*q >= '1' && *q <= '9' && !isdigit((unsigned char) q[1])) return *q - '0';
+    }
+    return 0;
+}
+
+/* the title without its disc marker, for grouping */
+static void group_key(char *dst, size_t n, const char *title)
+{
+    char tmp[128], *p;
+    strncpy(tmp, title, sizeof(tmp) - 1); tmp[sizeof(tmp) - 1] = 0;
+    for (p = tmp; *p; p++) {
+        int skip = (!strncasecmp(p, "disc", 4) || !strncasecmp(p, "disk", 4)) ? 4 :
+                   (!strncasecmp(p, "cd", 2) && (p == tmp || p[-1] == ' ')) ? 2 : 0;
+        if (!skip) continue;
+        char *q = p + skip;
+        while (*q == ' ' || *q == '_' || *q == '-' || *q == '.') q++;
+        if (*q >= '1' && *q <= '9') { *p = 0; break; }
+    }
+    size_t j = strlen(tmp);
+    while (j && (tmp[j - 1] == ' ' || tmp[j - 1] == '-' || tmp[j - 1] == '_')) tmp[--j] = 0;
+    strncpy(dst, tmp, n - 1); dst[n - 1] = 0;
+}
+
+/* PS1 / PS2 games split over several discs become one entry with a disc list */
+static void group_discs(GameList *l)
+{
+    int i, j, k;
+    for (i = 0; i < l->count; i++) {
+        Game *a = &l->games[i];
+        const char *an = strrchr(a->path, '/'); an = an ? an + 1 : a->path;
+        int da = disc_number(an);
+        if (da != 1) continue;                               /* groups start at disc 1 */
+        char ka[128]; group_key(ka, sizeof(ka), a->title);
+        for (j = 0; j < l->count; j++) {
+            if (j == i) continue;
+            Game *b = &l->games[j];
+            const char *bn = strrchr(b->path, '/'); bn = bn ? bn + 1 : b->path;
+            int db = disc_number(bn);
+            if (db < 2 || db > 4) continue;
+            char kb[128]; group_key(kb, sizeof(kb), b->title);
+            if (strcasecmp(ka, kb)) continue;
+            strcpy(a->discs[db - 2], b->path);
+            if (a->ndiscs < db) a->ndiscs = db;
+            b->ndiscs = 255;                                 /* merged: removed below */
+        }
+        if (a->ndiscs) strncpy(a->title, ka, sizeof(a->title) - 1);
+    }
+    for (i = 0, k = 0; i < l->count; i++)
+        if (l->games[i].ndiscs != 255) { if (k != i) l->games[k] = l->games[i]; k++; }
+    if (k != l->count) log_step("discs: %d entries merged into multi-disc games", l->count - k);
+    l->count = k;
+}
+
+static void scan_device(const char *root)
+{
+    char p[64];
+    IsoCtx c1 = { PLAT_PS1, 0 }, c2 = { PLAT_PS2, 0 }, c3 = { PLAT_PS3, 0 };
+    snprintf(p, sizeof(p), "%s/GAMES", root);  list_dir(p, on_ps3_folder, NULL);
+    snprintf(p, sizeof(p), "%s/GAMEZ", root);  list_dir(p, on_ps3_folder, NULL);
+    snprintf(p, sizeof(p), "%s/PS3ISO", root); list_dir(p, on_iso, &c3);
+    snprintf(p, sizeof(p), "%s/PS2ISO", root); list_dir(p, on_iso, &c2);
+    snprintf(p, sizeof(p), "%s/PSXISO", root); list_dir(p, on_iso, &c1);
+}
+
+Game *library_find(const char *path)
+{
+    int p, i;
+    for (p = 0; p < PLAT_COUNT; p++)
+        for (i = 0; i < library[p].count; i++)
+            if (!strcmp(library[p].games[i].path, path)) return &library[p].games[i];
+    return NULL;
+}
+
 void library_scan(void)
 {
-    int p;
-    IsoCtx c1 = { PLAT_PS1, 0 }, c2 = { PLAT_PS2, 0 }, c3 = { PLAT_PS3, 0 };
+    int p, u;
+    char root[32];
     for (p = 0; p < PLAT_COUNT; p++) library[p].count = 0;
 
-    list_dir("/dev_hdd0/GAMES", on_ps3_folder, NULL);
-    list_dir("/dev_hdd0/GAMEZ", on_ps3_folder, NULL);
-    list_dir("/dev_hdd0/PS3ISO", on_iso, &c3);
-    list_dir("/dev_hdd0/PS2ISO", on_iso, &c2);
-    list_dir("/dev_hdd0/PSXISO", on_iso, &c1);
+    strcpy(cur_where, "HDD");
+    scan_device("/dev_hdd0");
+    for (u = 0; u < 8; u++) {                                /* USB drives webMAN can play from */
+        snprintf(root, sizeof(root), "/dev_usb00%d", u);
+        if (!is_dir(root)) continue;
+        snprintf(cur_where, sizeof(cur_where), "USB %d", u);
+        log_step("scan: %s", root);
+        scan_device(root);
+    }
+    strcpy(cur_where, "HDD");
 
-    for (p = 0; p < PLAT_COUNT; p++)
+    for (p = 0; p < PLAT_COUNT; p++) {
+        if (p != PLAT_PS3) group_discs(&library[p]);
         if (library[p].count > 1) qsort(library[p].games, library[p].count, sizeof(Game), cmp_title);
+    }
 }

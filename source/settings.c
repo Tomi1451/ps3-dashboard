@@ -8,11 +8,12 @@
 #include "settings.h"
 #include "gfx.h"
 #include "log.h"
+#include "sound.h"
 
 #define SETTINGS_FILE "/dev_hdd0/game/PSDB00001/USRDIR/settings.txt"
 
-const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1 };
-Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1 };
+const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1 };
+Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1 };
 
 static const struct { const char *key; int *v; int lo, hi; } keys[] = {
     { "theme=",      &settings.theme,      0, 99 },
@@ -25,6 +26,9 @@ static const struct { const char *key; int *v; int lo, hi; } keys[] = {
     { "open_on=",    &settings.open_on,    0, 3 },
     { "last_plat=",  &settings.last_plat,  0, 2 },
     { "disc_popup=", &settings.disc_popup, 0, 1 },
+    { "view=",       &settings.view,       0, 2 },
+    { "sounds=",     &settings.sounds,     0, 1 },
+    { "sysinfo=",    &settings.sysinfo,    0, 1 },
 };
 #define NKEYS ((int) (sizeof(keys) / sizeof(keys[0])))
 
@@ -32,6 +36,7 @@ void settings_apply(void)
 {
     gfx_theme_set(settings.theme, settings.brightness, settings.wave);
     settings.font = gfx_font_set(settings.font);
+    sound_enable(settings.sounds);
 }
 
 void settings_load(void)

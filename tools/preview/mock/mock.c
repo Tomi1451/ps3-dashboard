@@ -108,7 +108,7 @@ int ioPadGetData(int port, padData *d)
         case 'U': d->BTN_UP = 1; break;  case 'D': d->BTN_DOWN = 1; break;
         case 'L': d->BTN_LEFT = 1; break; case 'R': d->BTN_RIGHT = 1; break;
         case 'X': d->BTN_CROSS = 1; break; case 'O': d->BTN_CIRCLE = 1; break;
-        case 'T': d->BTN_TRIANGLE = 1; break; case 'S': d->BTN_SQUARE = 1; break; case 'E': d->BTN_SELECT = 1; break;
+        case 'T': d->BTN_TRIANGLE = 1; break; case 'S': d->BTN_SQUARE = 1; break; case 'E': d->BTN_SELECT = 1; break; case '{': d->BTN_L2 = 1; break; case '}': d->BTN_R2 = 1; break; case 'Q': d->BTN_L3 = 1; break; case 'W': d->BTN_R3 = 1; break;
         case '[': d->BTN_L1 = 1; break; case ']': d->BTN_R1 = 1; break;
     }
     return 0;

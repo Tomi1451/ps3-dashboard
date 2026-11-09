@@ -13,6 +13,9 @@ typedef struct {
     int open_on;      /* 0 last console used, 1 PS1, 2 PS2, 3 PS3 */
     int last_plat;    /* remembered for open_on = 0 */
     int disc_popup;   /* 1 = ask what to do when a disc goes in */
+    int view;         /* 0 grid, 1 list, 2 large artwork */
+    int sounds;       /* 1 = navigation sounds */
+    int sysinfo;      /* 1 = free space and temperatures in the top bar */
 } Settings;
 
 extern Settings settings;

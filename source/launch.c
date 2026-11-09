@@ -68,10 +68,12 @@ static int webman_send(const char *cmds)
    /play.ps3<path> - mount the game and start it from the disc icon
    A lone /play.ps3 sent while we are still running only mounts: webMAN checks for the XMB once,
    right as we close and the XMB is still loading, so it skips the start. */
-int launch_game(const Game *g)
+int launch_game(const Game *g) { return launch_path(g->path); }
+
+int launch_path(const char *path)
 {
     char enc[1024], cmds[1200];
-    url_encode(enc, sizeof(enc), g->path);
+    url_encode(enc, sizeof(enc), path);
     snprintf(cmds, sizeof(cmds), "/wait.ps3?xmb;/wait.ps3?2;/play.ps3%s", enc);
     return webman_send(cmds);
 }
@@ -90,4 +92,10 @@ int install_disc(const char *target)
     url_encode(enc, sizeof(enc), target);
     snprintf(cmds, sizeof(cmds), "/mount.ps3/unmount;/wait.ps3?xmb;/wait.ps3?3;/copy.ps3/dev_bdvd&to=%s", enc);
     return webman_send(cmds);
+}
+
+/* drop any mounted game image so the real disc in the drive is what other apps see */
+int unmount_disc(void)
+{
+    return webman_send("/mount.ps3/unmount");
 }

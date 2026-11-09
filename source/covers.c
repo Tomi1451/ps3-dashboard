@@ -47,12 +47,12 @@ void covers_frame(void)
 }
 
 /* copy/shrink src (ARGB) into dst so it fits SLOT_DIM, keeping its shape */
-static void shrink_into(Slot *s, const u32 *src, u32 sw, u32 sh, u32 spitch)
+static void shrink_to(Slot *s, const u32 *src, u32 sw, u32 sh, u32 spitch, u32 maxw, u32 maxh)
 {
     u32 dw = sw, dh = sh;
-    if (dw > SLOT_DIM || dh > SLOT_DIM) {
-        if (sw >= sh) { dw = SLOT_DIM; dh = (u32) ((u64) sh * SLOT_DIM / sw); }
-        else          { dh = SLOT_DIM; dw = (u32) ((u64) sw * SLOT_DIM / sh); }
+    if (dw > maxw || dh > maxh) {
+        if ((u64) sw * maxh >= (u64) sh * maxw) { dw = maxw; dh = (u32) ((u64) sh * maxw / sw); }
+        else          { dh = maxh; dw = (u32) ((u64) sw * maxh / sh); }
         if (dw < 1) dw = 1;
         if (dh < 1) dh = 1;
     }
@@ -89,6 +89,8 @@ static void shrink_into(Slot *s, const u32 *src, u32 sw, u32 sh, u32 spitch)
     s->tex.w = dw;
     s->tex.h = dh;
 }
+
+static void shrink_into(Slot *s, const u32 *src, u32 sw, u32 sh, u32 spitch) { shrink_to(s, src, sw, sh, spitch, SLOT_DIM, SLOT_DIM); }
 
 static int decode(const char *path, Slot *s)
 {
@@ -142,4 +144,31 @@ const Texture *covers_get(const Game *g)
     s->state = decode(g->cover, s) ? 1 : 2;
     { static int fails = 0; if (s->state == 2 && fails++ < 10) log_step("cover failed: %s", g->cover); }
     return s->state == 1 ? &s->tex : NULL;
+}
+
+/* ---------------------------------------------------------------- backdrop
+   one larger texture for a game's background picture (PS3 PIC1.PNG), 960 x 540 max */
+#define BD_W 960
+#define BD_H 540
+static Slot bd;
+static char bd_path[400];
+
+const Texture *backdrop_get(const char *path)
+{
+    if (!path || !path[0]) return NULL;
+    if (!bd.pixels) { bd.pixels = gfx_tex_alloc(BD_W * BD_H * 4); if (!bd.pixels) return NULL; }
+    if (strcmp(bd_path, path)) {
+        if (loads_left <= 0) return NULL;
+        loads_left = 0;
+        strncpy(bd_path, path, sizeof(bd_path) - 1);
+        pngData png;
+        memset(&png, 0, sizeof(png));
+        bd.state = 2;
+        if (pngLoadFromFile(path, &png) == 0 && png.bmp_out) {
+            shrink_to(&bd, (const u32 *) png.bmp_out, png.width, png.height, png.pitch, BD_W, BD_H);
+            free(png.bmp_out);
+            bd.state = 1;
+        }
+    }
+    return bd.state == 1 ? &bd.tex : NULL;
 }

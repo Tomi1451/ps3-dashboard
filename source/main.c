@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <ctype.h>
 #include <unistd.h>
 
 #include <io/pad.h>
@@ -20,13 +21,20 @@
 #include "disc.h"
 #include "settings.h"
 #include "info.h"
+#include "lists.h"
+#include "sysinfo.h"
+#include "sound.h"
+#include <lv2/process.h>
+#include <lv2/sysfs.h>
+#include <strings.h>
 
-#define APP_VERSION "v0.17"
+#define APP_VERSION "v0.18"
 
 /* ---------------------------------------------------------------- input */
 enum {
     B_UP = 1, B_DOWN = 2, B_LEFT = 4, B_RIGHT = 8, B_CROSS = 16, B_CIRCLE = 32,
-    B_TRIANGLE = 64, B_SQUARE = 128, B_L1 = 256, B_R1 = 512, B_START = 1024, B_SELECT = 2048
+    B_TRIANGLE = 64, B_SQUARE = 128, B_L1 = 256, B_R1 = 512, B_START = 1024, B_SELECT = 2048,
+    B_L2 = 4096, B_R2 = 8192, B_L3 = 16384, B_R3 = 32768
 };
 
 static u32 pad_held = 0, pad_pressed = 0;
@@ -57,6 +65,10 @@ static void read_pads(void)
         if (d.BTN_R1)       now |= B_R1;
         if (d.BTN_START)    now |= B_START;
         if (d.BTN_SELECT)   now |= B_SELECT;
+        if (d.BTN_L2)       now |= B_L2;
+        if (d.BTN_R2)       now |= B_R2;
+        if (d.BTN_L3)       now |= B_L3;
+        if (d.BTN_R3)       now |= B_R3;
         break;
     }
     pad_pressed = now & ~prev;
@@ -111,6 +123,22 @@ static void thick_line(float x0, float y0, float x1, float y1, float t, u32 c)
     tiny3d_VertexPos(x1 + nx, y1 + ny, 1000); tiny3d_VertexColor(c);
     tiny3d_VertexPos(x1 - nx, y1 - ny, 1000); tiny3d_VertexColor(c);
     tiny3d_VertexPos(x0 - nx, y0 - ny, 1000); tiny3d_VertexColor(c);
+    tiny3d_End();
+}
+
+/* filled five-point star (favourites) */
+static void star(float cx, float cy, float r, u32 c)
+{
+    int i;
+    tiny3d_SetPolygon(TINY3D_QUADS);
+    for (i = 0; i < 10; i++) {
+        float a0 = -1.5707963f + i * 0.6283185f, a1 = a0 + 0.6283185f;
+        float r0 = (i & 1) ? r * 0.42f : r, r1 = (i & 1) ? r : r * 0.42f;
+        tiny3d_VertexPos(cx, cy, 1000);                                   tiny3d_VertexColor(c);
+        tiny3d_VertexPos(cx, cy, 1000);                                   tiny3d_VertexColor(c);
+        tiny3d_VertexPos(cx + r1 * cosf(a1), cy + r1 * sinf(a1), 1000);   tiny3d_VertexColor(c);
+        tiny3d_VertexPos(cx + r0 * cosf(a0), cy + r0 * sinf(a0), 1000);   tiny3d_VertexColor(c);
+    }
     tiny3d_End();
 }
 
@@ -178,9 +206,68 @@ static int prev_mode = 0, disc_choice = 0;
 static DiscInfo disc;
 static float anim = 0.0f;       /* selection pulse */
 
+/* tabs: 0 Home, 1 PS1, 2 PS2, 3 PS3 ("plat" follows the console tab) */
+static int tab = 1;
+#define ON_HOME (tab == 0)
+
+/* what a console tab shows: its games, filtered by the search text */
+static Game **vlist = NULL;
+static int vn = 0, vcap = 0;
+static char query[32] = "";
+static int kb_row = 0, kb_col = 0;        /* search keyboard cursor */
+static int disc_pick = 0;                 /* multi-disc picker */
+static const Game *pick_game = NULL;
+
+/* Home shelves */
+#define SHELF_MAX 64
+static Game *shelf[2][SHELF_MAX];
+static int shelf_n[2], home_row = 0, home_sel[2], home_left[2];
+
+static int contains_ci(const char *hay, const char *needle)
+{
+    size_t n = strlen(needle);
+    if (!n) return 1;
+    for (; *hay; hay++) if (!strncasecmp(hay, needle, n)) return 1;
+    return 0;
+}
+
+static void view_build(void)
+{
+    GameList *l = &library[plat];
+    int i;
+    if (vcap < l->count + 1) { vcap = l->count + 64; vlist = realloc(vlist, vcap * sizeof(Game *)); }
+    vn = 0;
+    for (i = 0; i < l->count; i++)
+        if (contains_ci(l->games[i].title, query)) vlist[vn++] = &l->games[i];
+    if (sel[plat] >= vn) sel[plat] = vn ? vn - 1 : 0;
+}
+
+static void home_build(void)
+{
+    shelf_n[0] = recent_list(shelf[0], SHELF_MAX);
+    shelf_n[1] = fav_list(shelf[1], SHELF_MAX);
+    int r;
+    for (r = 0; r < 2; r++) if (home_sel[r] >= shelf_n[r]) home_sel[r] = shelf_n[r] ? shelf_n[r] - 1 : 0;
+}
+
+static Game *cur_game(void)
+{
+    if (ON_HOME) return shelf_n[home_row] ? shelf[home_row][home_sel[home_row]] : NULL;
+    return vn ? vlist[sel[plat]] : NULL;
+}
+
+static void set_tab(int t)
+{
+    tab = t;
+    if (t > 0) plat = t - 1;
+    query[0] = 0;
+    if (ON_HOME) home_build(); else view_build();
+}
+
 static void draw_placeholder(const Game *g, float x, float y, float w, float h)
 {
     gfx_rect_v(x, y, w, h, plat_hue[g->plat][0], plat_hue[g->plat][1]);
+    if (w < 110) return;                       /* too small for a name (list view thumbnails) */
     gfx_text_wrap(x + 10, y + h * 0.45f, w > 160 ? 22 : 18, 0xffffffff, g->title, w - 20, 3);
 }
 
@@ -212,57 +299,90 @@ static void draw_cover(const Game *g, float bx, float by, float bw, float bh, in
 
 static void draw_nav(void)
 {
-    static const char *labels[PLAT_COUNT] = { "PS1", "PS2", "PS3" };
+    static const char *labels[4] = { "Home", "PS1", "PS2", "PS3" };
     float x = MARGIN_X;
-    int p, total = 0;
-    for (p = 0; p < PLAT_COUNT; p++) {
-        int on = (p == plat);
+    int t, total = 0;
+    for (t = 0; t < 4; t++) {
+        int on = (t == tab);
         float size = on ? 46 : 32;
-        float w = gfx_text_w(size, labels[p]);
-        gfx_text(x, on ? 52 : 64, size, on ? 0xffffffff : 0xffffff90, labels[p]);
+        float w = gfx_text_w(size, labels[t]);
+        gfx_text(x, on ? 52 : 64, size, on ? 0xffffffff : 0xffffff90, labels[t]);
         if (on) gfx_rect(x, 112, w, 4, gfx_accent(0xff));
         x += w + 56;
-        total += library[p].count;
     }
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%d games in your library", total);
+    for (t = 0; t < PLAT_COUNT; t++) total += library[t].count;
+    char buf[160];
+    const char *si = settings.sysinfo ? sysinfo_text() : "";
+    snprintf(buf, sizeof(buf), "%d games%s%s", total, si[0] ? "   \xB7   " : "", si);
     gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(22, buf), 70, 22, 0xffffffa0, buf);
+}
+
+/* small marks drawn on a cover: star for favourites, disc count */
+static void draw_badges(const Game *g, float x, float y, float w)
+{
+    if (g->fav) {
+        circle_fill(x + w - 20, y + 20, 15, 0x000000a8);
+        star(x + w - 20, y + 21, 11, 0xffd84aff);
+    }
+    if (g->ndiscs) {
+        char b[8]; snprintf(b, sizeof(b), "%d CD", g->ndiscs);
+        float bw = gfx_text_w(15, b) + 12;
+        gfx_rect(x + 6, y + 6, bw, 24, 0x000000a0);
+        gfx_text(x + 12, y + 9, 15, 0xffffffe0, b);
+    }
+}
+
+static void draw_heading(void)
+{
+    char buf[160];
+    float x;
+    if (query[0]) {
+        x = gfx_text(MARGIN_X, 168, 52, 0xffffffff, "Search");
+        snprintf(buf, sizeof(buf), "  \xB7  \"%s\" in %s  \xB7  %d found", query, plat_short(plat), vn);
+        gfx_text(x, 184, 30, 0xffffff90, buf);
+    } else {
+        x = gfx_text(MARGIN_X, 168, 52, 0xffffffff, plat_name(plat));
+        snprintf(buf, sizeof(buf), "  \xB7  %d game%s", vn, vn == 1 ? "" : "s");
+        gfx_text(x, 184, 34, 0xffffff90, buf);
+    }
+    if (vn) {
+        char pos[48];
+        snprintf(pos, sizeof(pos), "%d / %d   \xB7   %s", sel[plat] + 1, vn, settings.sort ? "Z-A" : "A-Z");
+        gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(22, pos), 196, 22, 0xffffff80, pos);
+    }
+}
+
+static int draw_empty(void)
+{
+    char buf[160];
+    if (vn) return 0;
+    if (query[0]) {
+        gfx_text_center(SCREEN_W / 2, 520, 34, 0xffffffe0, "No games match your search");
+        gfx_text_center(SCREEN_W / 2, 572, 24, 0xffffffa0, "Press L3 to change it");
+        return 1;
+    }
+    static const char *where[PLAT_COUNT] = { "PSXISO", "PS2ISO", "GAMES or PS3ISO" };
+    gfx_text_center(SCREEN_W / 2, 520, 34, 0xffffffe0, "No games found here yet");
+    snprintf(buf, sizeof(buf), "Put your %s games in %s on the internal HDD or a USB drive", plat_short(plat), where[plat]);
+    gfx_text_center(SCREEN_W / 2, 572, 24, 0xffffffa0, buf);
+    return 1;
 }
 
 static void draw_grid(void)
 {
-    GameList *l = &library[plat];
-    char buf[160];
     int i;
-
-    snprintf(buf, sizeof(buf), "%s", plat_name(plat));
-    float x = gfx_text(MARGIN_X, 168, 52, 0xffffffff, buf);
-    snprintf(buf, sizeof(buf), "  \xB7  %d game%s", l->count, l->count == 1 ? "" : "s");
-    gfx_text(x, 184, 34, 0xffffff90, buf);
-
-    if (l->count == 0) {
-        static const char *where[PLAT_COUNT] = { "/dev_hdd0/PSXISO", "/dev_hdd0/PS2ISO", "/dev_hdd0/GAMES or /dev_hdd0/PS3ISO" };
-        gfx_text_center(SCREEN_W / 2, 520, 34, 0xffffffe0, "No games found here yet");
-        snprintf(buf, sizeof(buf), "Put your %s games in %s", plat_short(plat), where[plat]);
-        gfx_text_center(SCREEN_W / 2, 572, 24, 0xffffffa0, buf);
-        return;
-    }
+    draw_heading();
+    if (draw_empty()) return;
 
     /* keep the selected row visible */
     int srow = sel[plat] / COLS;
     if (srow < top_row[plat]) top_row[plat] = srow;
     if (srow > top_row[plat] + 1) top_row[plat] = srow - 1;
 
-    const Game *cur = &l->games[sel[plat]];
-    {
-        char pos[48];
-        snprintf(pos, sizeof(pos), "%d / %d   \xB7   %s", sel[plat] + 1, l->count, settings.sort ? "Z-A" : "A-Z");
-        gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(22, pos), 196, 22, 0xffffff80, pos);
-    }
-
+    const Game *cur = vlist[sel[plat]];
     float bh = COVER_H, bw = COVER_H * plat_aspect[plat];
     int first = top_row[plat] * COLS, last = first + COLS * VIS_ROWS;
-    if (last > l->count) last = l->count;
+    if (last > vn) last = vn;
 
     for (i = first; i < last; i++) {
         int r = i / COLS - top_row[plat], c = i % COLS;
@@ -270,17 +390,216 @@ static void draw_grid(void)
         float cy = GRID_Y + r * ROW_H;
         if (cy + bh > FOOTER_Y - 10) break;          /* only whole rows above the button bar */
         if (i == sel[plat]) continue;               /* selected drawn last, on top */
-        draw_cover(&l->games[i], cx, cy, bw, bh, 0);
-        if (settings.titles) gfx_text_fit(cx, cy + bh + 16, 19, 0xffffffb0, l->games[i].title, CELL_W - 30);
+        draw_cover(vlist[i], cx, cy, bw, bh, 0);
+        draw_badges(vlist[i], cx, cy, bw);
+        if (settings.titles) gfx_text_fit(cx, cy + bh + 16, 19, 0xffffffb0, vlist[i]->title, CELL_W - 30);
     }
     {
         int r = sel[plat] / COLS - top_row[plat], c = sel[plat] % COLS;
         float cx = MARGIN_X + c * CELL_W + (CELL_W - bw) / 2, cy = GRID_Y + r * ROW_H;
         draw_cover(cur, cx, cy, bw, bh, 1);
+        draw_badges(cur, cx, cy - bh * 0.06f, bw);
         gfx_text_fit(cx, cy + bh + 16, 21, 0xffffffff, cur->title, CELL_W - 30);   /* the selected game always shows its name */
     }
     /* preload the next row so scrolling shows covers straight away */
-    for (i = last; i < last + COLS && i < l->count; i++) covers_get(&l->games[i]);
+    for (i = last; i < last + COLS && i < vn; i++) covers_get(vlist[i]);
+}
+
+/* list view: one game per row */
+#define LIST_Y     270.0f
+#define LIST_ROW   86.0f
+#define LIST_ROWS  7
+static void draw_list(void)
+{
+    int i;
+    char buf[160];
+    draw_heading();
+    if (draw_empty()) return;
+    if (sel[plat] < top_row[plat]) top_row[plat] = sel[plat];
+    if (sel[plat] >= top_row[plat] + LIST_ROWS) top_row[plat] = sel[plat] - LIST_ROWS + 1;
+    for (i = top_row[plat]; i < vn && i < top_row[plat] + LIST_ROWS; i++) {
+        const Game *g = vlist[i];
+        int on = (i == sel[plat]);
+        float y = LIST_Y + (i - top_row[plat]) * LIST_ROW, x = MARGIN_X;
+        if (on) {
+            gfx_rect(x - 16, y - 4, SCREEN_W - 2 * MARGIN_X + 32, LIST_ROW - 8, 0xffffff22);
+            gfx_frame(x - 16, y - 4, SCREEN_W - 2 * MARGIN_X + 32, LIST_ROW - 8, 1, 0xffffff70);
+        }
+        float ch = LIST_ROW - 22, cw = ch * plat_aspect[g->plat];
+        const Texture *t = covers_get(g);
+        if (t) { float sc = fminf(ch / t->h, ch * 1.2f / t->w); gfx_image(t, x + (ch * 1.2f - t->w * sc) / 2, y + 3 + (ch - t->h * sc) / 2, t->w * sc, t->h * sc, 0xffffffff); }
+        else draw_placeholder(g, x + (ch * 1.2f - cw) / 2, y + 3, cw, ch);
+        float tx = x + ch * 1.2f + 30;
+        gfx_text_fit(tx, y + 10, 30, on ? 0xffffffff : 0xffffffc8, g->title, 1050);
+        snprintf(buf, sizeof(buf), "%s%s%s%s%s", g->region[0] ? g->region : "", g->region[0] ? "  \xB7  " : "", format_name(g->format),
+                 g->where[0] && strcmp(g->where, "HDD") ? "  \xB7  " : "", g->where[0] && strcmp(g->where, "HDD") ? g->where : "");
+        gfx_text(tx, y + 48, 19, 0xffffff80, buf);
+        float rx = SCREEN_W - MARGIN_X;
+        if (g->fav) { rx -= 30; star(rx + 14, y + 38, 13, 0xffd84aff); }
+        if (g->ndiscs) { snprintf(buf, sizeof(buf), "%d discs", g->ndiscs); rx -= gfx_text_w(20, buf) + 24; gfx_text(rx, y + 24, 20, 0xffffffa0, buf); }
+    }
+    for (i = top_row[plat] + LIST_ROWS; i < top_row[plat] + LIST_ROWS + 3 && i < vn; i++) covers_get(vlist[i]);
+}
+
+/* large artwork view: one big cover in the middle, neighbours either side */
+static void draw_large(void)
+{
+    int k;
+    char buf[200];
+    draw_heading();
+    if (draw_empty()) return;
+    const float big = 470, cy = 270, gap = 46;
+    float hk[4] = { big, 300, 250, 210 }, xk[4];            /* height and left edge of each neighbour */
+    xk[0] = 0;
+    {
+        float off = big * plat_aspect[plat] / 2 + gap;
+        for (k = 1; k <= 3; k++) { xk[k] = off; off += hk[k] * plat_aspect[plat] + gap * 0.6f; }
+    }
+    for (k = 3; k >= 1; k--) {                       /* neighbours, furthest first */
+        int s;
+        for (s = -1; s <= 1; s += 2) {
+            int i = sel[plat] + s * k;
+            if (i < 0 || i >= vn) continue;
+            float h = hk[k], w = h * plat_aspect[plat];
+            float cx = s > 0 ? SCREEN_W / 2 + xk[k] : SCREEN_W / 2 - xk[k] - w;
+            if (cx + w < 0 || cx > SCREEN_W) continue;
+            draw_cover(vlist[i], cx, cy + (big - h), w, h, 0);
+            gfx_rect(cx, cy + (big - h), w, h, gfx_theme_col(3, 0x30 + 0x28 * k));
+        }
+    }
+    const Game *g = vlist[sel[plat]];
+    float w = big * plat_aspect[plat];
+    draw_cover(g, SCREEN_W / 2 - w / 2, cy, w, big, 1);
+    draw_badges(g, SCREEN_W / 2 - w / 2, cy - big * 0.06f, w);
+    gfx_text_center(SCREEN_W / 2, cy + big + 40, 40, 0xffffffff, g->title);
+    snprintf(buf, sizeof(buf), "%s%s%s", g->region[0] ? g->region : "", g->region[0] ? "  \xB7  " : "", format_name(g->format));
+    gfx_text_center(SCREEN_W / 2, cy + big + 96, 22, 0xffffff90, buf);
+}
+
+/* Home: Recently played and Favourites shelves */
+static void draw_home(void)
+{
+    static const char *names[2] = { "Recently played", "Favourites" };
+    static const char *empty[2] = { "Games you start from the dashboard show up here.", "Press SQUARE on any game to add it to your favourites." };
+    int r, i;
+    for (r = 0; r < 2; r++) {
+        float y = 166 + r * 380, h = 250;
+        gfx_text(MARGIN_X, y, 26, r == home_row ? 0xffffffff : 0xffffff90, names[r]);
+        if (!shelf_n[r]) {
+            gfx_text(MARGIN_X, y + 60, 22, 0xffffff70, empty[r]);
+            continue;
+        }
+        if (home_sel[r] < home_left[r]) home_left[r] = home_sel[r];
+        float x = MARGIN_X;
+        int last = home_left[r];
+        /* fit as many as there is room for, keeping the selected one in view */
+        for (;;) {
+            float xx = MARGIN_X; int k;
+            for (k = home_left[r]; k < shelf_n[r]; k++) { xx += h * plat_aspect[shelf[r][k]->plat] + 34; if (xx > SCREEN_W - MARGIN_X) break; }
+            last = k - 1;
+            if (home_sel[r] <= last || home_left[r] >= home_sel[r]) break;
+            home_left[r]++;
+        }
+        for (i = home_left[r]; i <= last && i < shelf_n[r]; i++) {
+            Game *g = shelf[r][i];
+            float w = h * plat_aspect[g->plat];
+            int on = (r == home_row && i == home_sel[r]);
+            draw_cover(g, x, y + 62, w, h, on);
+            draw_badges(g, x, y + 62 - (on ? h * 0.06f : 0), w);
+            if (on) gfx_text_fit(x, y + 62 + h + 14, 21, 0xffffffff, g->title, 520);
+            x += w + 34;
+        }
+    }
+}
+
+static void draw_browse(void)
+{
+    draw_nav();
+    if (ON_HOME) draw_home();
+    else if (settings.view == 1) draw_list();
+    else if (settings.view == 2) draw_large();
+    else draw_grid();
+}
+
+/* index of the first game whose title starts with a different letter (dir +1 / -1) */
+static int letter_jump(int from, int dir)
+{
+    if (!vn) return 0;
+    char c = toupper((unsigned char) vlist[from]->title[0]);
+    int i = from;
+    while (i + dir >= 0 && i + dir < vn && toupper((unsigned char) vlist[i + dir]->title[0]) == c) i += dir;
+    i += dir;
+    if (i < 0) return 0;
+    if (i >= vn) return vn - 1;
+    if (dir < 0) {                                    /* go to the start of that letter */
+        char c2 = toupper((unsigned char) vlist[i]->title[0]);
+        while (i > 0 && toupper((unsigned char) vlist[i - 1]->title[0]) == c2) i--;
+    }
+    return i;
+}
+
+/* ---------------------------------------------------------------- search keyboard */
+static const char *kb_rows[] = { "ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZ0123", "456789" };
+static const char *kb_keys[] = { "Space", "Delete", "Clear", "Done" };
+#define KB_ROWS 5
+
+static void draw_keyboard(void)
+{
+    const float kw = 92, kh = 74, gap = 10;
+    float pw = 10 * (kw + gap) + 70, ph = KB_ROWS * (kh + gap) + 190;
+    float px = (SCREEN_W - pw) / 2, py = (SCREEN_H - ph) / 2 - 20;
+    int r, c;
+    gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0xa0));
+    gfx_rect_v(px, py, pw, ph, gfx_theme_col(1, 0xff), gfx_theme_col(2, 0xff));
+    gfx_frame(px, py, pw, ph, 1, 0xffffff40);
+    gfx_rect(px, py, pw, 4, gfx_accent(0xff));
+    gfx_text(px + 35, py + 26, 30, 0xffffffff, "Search");
+    /* the text so far */
+    gfx_rect(px + 35, py + 76, pw - 70, 56, 0x00000060);
+    gfx_frame(px + 35, py + 76, pw - 70, 56, 1, 0xffffff40);
+    {
+        float tx = gfx_text(px + 50, py + 88, 30, 0xffffffff, query);
+        if (((int) (anim * 2)) & 1) gfx_rect(tx + 2, py + 88, 3, 32, 0xffffffd0);
+        char b[48]; snprintf(b, sizeof(b), "%d found", vn);
+        gfx_text(px + pw - 50 - gfx_text_w(20, b), py + 94, 20, 0xffffff90, b);
+    }
+    for (r = 0; r < KB_ROWS; r++) {
+        int n = r < 4 ? (int) strlen(kb_rows[r]) : 4;
+        for (c = 0; c < n; c++) {
+            float w = r < 4 ? kw : (10 * (kw + gap) - 3 * gap) / 4;
+            float x = px + 35 + c * (w + gap), y = py + 160 + r * (kh + gap);
+            int on = (r == kb_row && c == kb_col);
+            gfx_rect(x, y, w, kh, on ? 0xffffff40 : 0xffffff12);
+            gfx_frame(x, y, w, kh, on ? 2 : 1, on ? 0xffffffe0 : 0xffffff30);
+            if (r < 4) { char k[2] = { kb_rows[r][c], 0 }; gfx_text_center(x + w / 2, y + 18, 34, 0xffffffff, k); }
+            else gfx_text_center(x + w / 2, y + 22, 26, 0xffffffff, kb_keys[c]);
+        }
+    }
+}
+
+static void keyboard_input(void)
+{
+    int n = kb_row < 4 ? (int) strlen(kb_rows[kb_row]) : 4;
+    if (pad_pressed & B_RIGHT) { kb_col = (kb_col + 1) % n; sound_play(SND_MOVE); }
+    if (pad_pressed & B_LEFT)  { kb_col = (kb_col + n - 1) % n; sound_play(SND_MOVE); }
+    if (pad_pressed & (B_UP | B_DOWN)) {
+        kb_row = (kb_row + ((pad_pressed & B_DOWN) ? 1 : KB_ROWS - 1)) % KB_ROWS;
+        int m = kb_row < 4 ? (int) strlen(kb_rows[kb_row]) : 4;
+        if (kb_col >= m) kb_col = m - 1;
+        sound_play(SND_MOVE);
+    }
+    size_t len = strlen(query);
+    int changed = 0;
+    if (pad_pressed & B_CROSS) {
+        if (kb_row < 4) { if (len < sizeof(query) - 1) { query[len] = kb_rows[kb_row][kb_col]; query[len + 1] = 0; changed = 1; } }
+        else if (kb_col == 0) { if (len && len < sizeof(query) - 1) { query[len] = ' '; query[len + 1] = 0; changed = 1; } }
+        else if (kb_col == 1) { if (len) { query[len - 1] = 0; changed = 1; } }
+        else if (kb_col == 2) { query[0] = 0; changed = 1; }
+        else { mode = 0; sound_play(SND_OK); }
+    }
+    if (pad_pressed & B_SQUARE) { if (len) { query[len - 1] = 0; changed = 1; } }     /* quick delete */
+    if (pad_pressed & (B_CIRCLE | B_START | B_L3)) { mode = 0; sound_play(SND_BACK); }
+    if (changed) { sel[plat] = 0; top_row[plat] = 0; view_build(); sound_play(SND_MOVE); }
 }
 
 static void fact(float x, float y, const char *label, const char *value, float max_w)
@@ -293,11 +612,21 @@ static int info_lines_visible = 1, info_lines_total = 0;
 
 static void draw_info(void)
 {
-    GameList *l = &library[plat];
-    if (l->count == 0) { mode = 0; return; }
-    const Game *g = &l->games[sel[plat]];
+    const Game *g = cur_game();
+    if (!g) { mode = 0; return; }
     const GameInfo *gi = info_get(g);
     char buf[200];
+
+    /* the game's own background picture (PS3 folder games have PS3_GAME/PIC1.PNG) */
+    if (g->format == FMT_FOLDER) {
+        char pic[460];
+        snprintf(pic, sizeof(pic), "%s/PS3_GAME/PIC1.PNG", g->path);
+        const Texture *bd = backdrop_get(pic);
+        if (bd) {
+            gfx_image(bd, 0, 0, SCREEN_W, SCREEN_H, 0xffffffff);
+            gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0xa8));     /* darken so text stays readable */
+        }
+    }
 
     /* breadcrumb */
     float bx = gfx_text(MARGIN_X, 56, 26, 0xffffff90, plat_short(g->plat));
@@ -326,7 +655,12 @@ static void draw_info(void)
     gfx_text(x + 16, y + 8, 17, 0xffffffff, plat_name(g->plat));
     y = gfx_text_wrap(x, y + 60, 58, 0xffffffff, g->title, w, 2);
 
-    snprintf(buf, sizeof(buf), "%s%s%s", g->region[0] ? g->region : "", g->region[0] ? "   \xB7   " : "", format_name(g->format));
+    {
+        char d[24] = "";
+        if (g->ndiscs) snprintf(d, sizeof(d), "   \xB7   %d discs", g->ndiscs);
+        snprintf(buf, sizeof(buf), "%s%s%s%s%s%s%s", g->region[0] ? g->region : "", g->region[0] ? "   \xB7   " : "", format_name(g->format), d,
+                 g->where[0] && strcmp(g->where, "HDD") ? "   \xB7   " : "", g->where[0] && strcmp(g->where, "HDD") ? g->where : "", g->fav ? "   \xB7   Favourite" : "");
+    }
     gfx_text(x, y + 4, 24, 0xffffffb0, buf);
 
     /* facts: 3 x 2, blank when not known */
@@ -368,15 +702,18 @@ static void draw_info(void)
 }
 
 /* ---------------------------------------------------------------- settings window */
-enum { S_HEADER, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT };
+enum { S_HEADER, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT, S_VIEW, S_SOUNDS, S_SYSINFO };
 static const struct { int id; const char *label; const char *help; } set_items[] = {
     { S_HEADER, "APPEARANCE", NULL },
     { S_THEME,  "Background colour", "PlayStation colours: the PS3 XMB blue, the PlayStation logo colours, the face-button colours and the console finishes." },
     { S_BRIGHT, "Background brightness", "How bright the background is." },
     { S_WAVE,   "Background animation", "Like the PS3 home screen: the moving wave, plus sparkles and soft circles floating past." },
     { S_FONT,   "Font", "The PS3's own system fonts. Fonts your firmware doesn't have are skipped." },
+    { S_SOUNDS, "Navigation sounds", "Soft clicks and chimes as you move around. Made by the dashboard itself." },
+    { S_SYSINFO,"Console info in the top bar", "Free space on the internal HDD and the CPU / RSX temperatures, updated every few seconds." },
     { S_HEADER, "LIBRARY", NULL },
-    { S_SIZE,   "Cover size", "Smaller covers fit more games on each row." },
+    { S_VIEW,   "Library view", "Grid of covers, a list, or one large cover at a time. R3 switches view from the library too." },
+    { S_SIZE,   "Cover size", "Smaller covers fit more games on each row (grid view)." },
     { S_TITLES, "Game names under covers", "The selected game always shows its name." },
     { S_SORT,   "Sort order", "Order of the games in each library." },
     { S_OPEN,   "Open on", "Which library is shown when the dashboard starts." },
@@ -406,6 +743,9 @@ static const char *set_value(int id, char *buf, size_t n)
         case S_SORT:   return settings.sort ? "Z to A" : "A to Z";
         case S_OPEN:   return open[settings.open_on];
         case S_DISC:   return settings.disc_popup ? "On" : "Off";
+        case S_VIEW:   return settings.view == 0 ? "Grid" : settings.view == 1 ? "List" : "Large artwork";
+        case S_SOUNDS: return settings.sounds ? "On" : "Off";
+        case S_SYSINFO:return settings.sysinfo ? "Show" : "Hide";
         case S_RESCAN: snprintf(buf, n, "%d games", library[0].count + library[1].count + library[2].count); return buf;
         
     }
@@ -520,6 +860,9 @@ static void settings_change(int d, int pressed_x)
         case S_SORT:   settings.sort = !settings.sort; apply_sort(); break;
         case S_OPEN:   settings.open_on = (settings.open_on + d + 4) % 4; break;
         case S_DISC:   settings.disc_popup = !settings.disc_popup; break;
+        case S_VIEW:   settings.view = (settings.view + d + 3) % 3; top_row[plat] = 0; break;
+        case S_SOUNDS: settings.sounds = !settings.sounds; break;
+        case S_SYSINFO:settings.sysinfo = !settings.sysinfo; break;
         case S_RESCAN: if (!pressed_x) return; rescan_library(); return;
         case S_RESET:
             if (!pressed_x) return;
@@ -534,7 +877,9 @@ static void settings_change(int d, int pressed_x)
 static void settings_window_input(void)
 {
     int i;
-    if (pad_pressed & (B_SELECT | B_CIRCLE)) { show_settings = 0; return; }
+    if (pad_pressed & (B_SELECT | B_CIRCLE)) { show_settings = 0; sound_play(SND_BACK); return; }
+    if (pad_pressed & (B_UP | B_DOWN)) sound_play(SND_MOVE);
+    if (pad_pressed & (B_LEFT | B_RIGHT | B_CROSS)) sound_play(SND_TAB);
     if (pad_pressed & B_DOWN) for (i = set_row + 1; i < SET_COUNT; i++) if (set_selectable(i)) { set_row = i; break; }
     if (pad_pressed & B_UP)   for (i = set_row - 1; i >= 0; i--)        if (set_selectable(i)) { set_row = i; break; }
     if (pad_pressed & B_RIGHT) settings_change(1, 0);
@@ -562,22 +907,36 @@ static void draw_footer_band(void)
 static void draw_hints(void)
 {
     float x = MARGIN_X, y = FOOTER_Y + 40;
-    if (!show_settings) draw_footer_band();   /* the settings window dims everything itself */
+    if (!show_settings && mode != 4) draw_footer_band();   /* windows dim everything themselves */
     if (show_settings) {
         x = hint_pill(x, y, "UP / DOWN", "Choose");
         x = hint_pill(x, y, "LEFT / RIGHT", "Change");
         x = hint(x, y, 'o', "Close");
-    } else if (mode == 3) {
+    } else if (mode == 4) {
+        x = hint(x, y, 'x', "Type");
+        x = hint(x, y, 's', "Delete");
+        x = hint(x, y, 'o', "Done");
+    } else if (mode == 3 || mode == 5) {
         x = hint(x, y, 'x', "Select");
-        x = hint(x, y, 'o', "Not now");
+        x = hint(x, y, 'o', mode == 3 ? "Not now" : "Back");
     } else if (mode == 1) {
         x = hint(x, y, 'x', "Play");
         x = hint(x, y, 'o', "Back");
+        x = hint(x, y, 's', cur_game() && cur_game()->fav ? "Unfavourite" : "Favourite");
         if (info_lines_total > info_lines_visible) x = hint_pill(x, y, "UP / DOWN", "Scroll");
     } else {
-        x = hint(x, y, 'x', "Play");
-        x = hint(x, y, 't', "Game info");
-        x = hint_pill(x, y, "L1 / R1", "Switch console");
+        int have = cur_game() != NULL;
+        if (have) {
+            x = hint(x, y, 'x', "Play");
+            x = hint(x, y, 't', "Info");
+            x = hint(x, y, 's', cur_game()->fav ? "Unfavourite" : "Favourite");
+        }
+        x = hint_pill(x, y, "L1 / R1", "Tabs");
+        if (!ON_HOME) {
+            x = hint_pill(x, y, "L2 / R2", "A-Z");
+            x = hint_pill(x, y, "L3", query[0] ? "Search*" : "Search");
+            x = hint_pill(x, y, "R3", "View");
+        }
         x = hint_pill(x, y, "SELECT", "Settings");
         x = hint_pill(x, y, "START", "Exit");
     }
@@ -585,18 +944,56 @@ static void draw_hints(void)
 }
 
 /* ---------------------------------------------------------------- main */
-static void start_game(const Game *g)
+static void leave_app(void) { sound_shutdown(); exit(0); }
+
+static void start_disc(const Game *g, int disc_no)    /* disc_no 1..4 */
 {
-    char line[200];
-    snprintf(line, sizeof(line), "Starting %s ...  It opens by itself once the XMB has loaded - don't press any buttons.", g->title);
+    char line[220];
+    const char *path = disc_no <= 1 ? g->path : g->discs[disc_no - 2];
+    if (g->ndiscs) snprintf(line, sizeof(line), "Starting %s (disc %d) ...  It opens by itself once the XMB has loaded - don't press any buttons.", g->title, disc_no);
+    else snprintf(line, sizeof(line), "Starting %s ...  It opens by itself once the XMB has loaded - don't press any buttons.", g->title);
+    sound_play(SND_OK);
     gfx_begin(); gfx_background(anim * 0.2f); draw_message("Loading game", line); gfx_end();
-    log_step("launch: %s", g->path);
-    if (launch_game(g)) { log_step("webMAN accepted"); exit(0); }
+    log_step("launch: %s", path);
+    recent_add(g);
+    if (launch_path(path)) { log_step("webMAN accepted"); leave_app(); }
     log_step("webMAN not reachable");        /* webMAN mounts and starts the game after we exit */
     mode = 2;
 }
 
-static int disc_can_install(void) { return disc.type == DISC_PS3; }
+static void start_game(const Game *g)
+{
+    if (!g) return;
+    if (g->ndiscs) { pick_game = g; disc_pick = 0; prev_mode = mode; mode = 5; sound_play(SND_TAB); return; }
+    start_disc(g, 1);
+}
+
+static void draw_disc_picker(void)
+{
+    const Game *g = pick_game;
+    float w = 900, h = 200 + g->ndiscs * 76, x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2;
+    int i;
+    gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0xc0));
+    gfx_rect_v(x, y, w, h, gfx_theme_col(1, 0xff), gfx_theme_col(2, 0xff));
+    gfx_frame(x, y, w, h, 1, 0xffffff40);
+    gfx_text(x + 50, y + 36, 20, 0xffffff8c, "WHICH DISC?");
+    gfx_text_fit(x + 50, y + 70, 36, 0xffffffff, g->title, w - 100);
+    for (i = 0; i < g->ndiscs; i++) {
+        float by = y + 140 + i * 76;
+        int on = (i == disc_pick);
+        const char *p = i == 0 ? g->path : g->discs[i - 1];
+        const char *base = strrchr(p, '/'); base = base ? base + 1 : p;
+        char b[32]; snprintf(b, sizeof(b), "Disc %d", i + 1);
+        gfx_rect(x + 40, by, w - 80, 64, on ? 0xffffff30 : 0xffffff10);
+        gfx_frame(x + 40, by, w - 80, 64, on ? 2 : 1, on ? 0xffffffd0 : 0xffffff30);
+        gfx_text(x + 64, by + 16, 28, 0xffffffff, b);
+        gfx_text_fit(x + 220, by + 21, 20, 0xffffff90, p[0] ? base : "(missing)", w - 300);
+    }
+}
+
+#define MULTIMAN_EBOOT "/dev_hdd0/game/BLES80608/USRDIR/EBOOT.BIN"
+static int have_multiman(void) { sysFSStat st; return sysLv2FsStat(MULTIMAN_EBOOT, &st) == 0; }
+static int disc_can_install(void) { return disc.type == DISC_PS3 || ((disc.type == DISC_PS1 || disc.type == DISC_PS2) && have_multiman()); }
 
 static void draw_disc_popup(void)
 {
@@ -611,7 +1008,7 @@ static void draw_disc_popup(void)
     else snprintf(line, sizeof(line), "%s", disc.id[0] ? disc.id : "Game ID not readable yet");
     gfx_text_fit(x + 60, y + 144, 24, 0xffffffb0, line, w - 120);
 
-    const char *labels[2] = { "Play", "Install to HDD" };
+    const char *labels[2] = { "Play", disc.type == DISC_PS3 ? "Install to HDD" : "Make ISO" };
     int i;
     for (i = 0; i < 2; i++) {
         float bx = x + 60 + i * 300, by = y + 210, bw = 270, bh = 70;
@@ -621,9 +1018,11 @@ static void draw_disc_popup(void)
         gfx_text_center(bx + bw / 2, by + 20, 28, ok ? 0xffffffff : 0xffffff50, labels[i]);
     }
     const char *note =
-        disc_choice == 1 ? "webMAN copies the disc to /dev_hdd0/GAMES on the XMB and tells you when it's finished. It then appears in your PS3 library." :
-        disc_can_install() ? "Starts the disc from the XMB once the dashboard has closed." :
-        "Starts the disc from the XMB once the dashboard has closed.  Installing PlayStation and PS2 discs to the HDD isn't available yet.";
+        disc_choice == 0 ? "Starts the disc from the XMB once the dashboard has closed." :
+        disc.type == DISC_PS3 ? "webMAN copies the disc to /dev_hdd0/GAMES on the XMB and tells you when it's finished. It then appears in your PS3 library." :
+        "Opens multiMAN. Switch it to mmCM mode, pick the disc and choose Create ISO - multiMAN reads PlayStation discs properly. Then Rescan library here.";
+    if (disc_choice == 0 && !disc_can_install() && disc.type != DISC_PS3)
+        note = "Starts the disc from the XMB once the dashboard has closed.  To make an ISO of this disc, install multiMAN (it has a Create ISO option).";
     gfx_text_wrap(x + 60, y + 310, 22, 0xffffffc0, note, w - 120, 3);
 }
 
@@ -637,6 +1036,19 @@ static void disc_action(void)
         gfx_begin(); gfx_background(anim * 0.2f); draw_message("Loading disc", line); gfx_end();
         log_step("disc: play");
         ok = launch_disc();
+    } else if (disc.type != DISC_PS3) {
+        /* PS1 / PS2: hand over to multiMAN, which can read and image these discs */
+        gfx_begin(); gfx_background(anim * 0.2f);
+        draw_message("Opening multiMAN", "In multiMAN: switch to mmCM mode, select the disc and choose Create ISO. Then come back and use Settings > Rescan library.");
+        gfx_end();
+        unmount_disc();                       /* so multiMAN sees the real disc, not a mounted image */
+        sleep(3);
+        sound_shutdown();
+        log_step("disc: opening multiMAN to make an ISO");
+        sysProcessExitSpawn2(MULTIMAN_EBOOT, NULL, NULL, NULL, 0, 1001, SYS_PROCESS_SPAWN_STACK_SIZE_1M);
+        log_step("multiMAN did not start");
+        mode = 0;
+        return;
     } else {
         /* folder name: "<title> [<ID>]" with characters the HDD can't take removed */
         const char *src = disc.title[0] ? disc.title : (disc.id[0] ? disc.id : "PS3 disc");
@@ -652,7 +1064,7 @@ static void disc_action(void)
         ok = install_disc(target);
         if (ok) sleep(3);   /* leave the message up long enough to read */
     }
-    if (ok) { log_step("webMAN accepted"); exit(0); }
+    if (ok) { log_step("webMAN accepted"); leave_app(); }
     log_step("webMAN not reachable");
     mode = 2;
 }
@@ -670,6 +1082,7 @@ static void apply_sort(void)
     }
     sorted_za = settings.sort;
     covers_reset();
+    view_build(); home_build();
 }
 
 static void rescan_library(void)
@@ -679,10 +1092,51 @@ static void rescan_library(void)
     covers_reset();
     info_forget();
     library_scan();
+    lists_load();
     sorted_za = 0;
     apply_sort();
     for (p = 0; p < PLAT_COUNT; p++) { if (sel[p] >= library[p].count) sel[p] = 0; top_row[p] = 0; }
+    view_build(); home_build();
     log_step("rescan: PS1 %d, PS2 %d, PS3 %d", library[0].count, library[1].count, library[2].count);
+}
+
+/* moving the selection on a console tab, for the current view */
+static void browse_move(void)
+{
+    if (!vn) return;
+    int s = sel[plat], was = s;
+    if (settings.view == 1) {                                    /* list */
+        if (pad_pressed & B_DOWN) s++;
+        if (pad_pressed & B_UP) s--;
+        if (pad_pressed & B_RIGHT) s += LIST_ROWS;
+        if (pad_pressed & B_LEFT) s -= LIST_ROWS;
+    } else if (settings.view == 2) {                             /* large artwork */
+        if (pad_pressed & B_RIGHT) s++;
+        if (pad_pressed & B_LEFT) s--;
+        if (pad_pressed & B_DOWN) s += 5;
+        if (pad_pressed & B_UP) s -= 5;
+    } else {                                                     /* grid */
+        if (pad_pressed & B_RIGHT) s++;
+        if (pad_pressed & B_LEFT) s--;
+        if (pad_pressed & B_DOWN) { if (s + COLS < vn) s += COLS; else if (s / COLS < (vn - 1) / COLS) s = vn - 1; }
+        if (pad_pressed & B_UP) { if (s - COLS >= 0) s -= COLS; }
+    }
+    if (pad_pressed & B_R2) s = letter_jump(s, 1);
+    if (pad_pressed & B_L2) s = letter_jump(s, -1);
+    if (s < 0) s = 0;
+    if (s >= vn) s = vn - 1;
+    if (s != was) sound_play(SND_MOVE);
+    sel[plat] = s;
+}
+
+static void home_move(void)
+{
+    int r = home_row;
+    if ((pad_pressed & B_DOWN) && home_row == 0) { home_row = 1; sound_play(SND_MOVE); }
+    if ((pad_pressed & B_UP) && home_row == 1) { home_row = 0; sound_play(SND_MOVE); }
+    r = home_row;
+    if ((pad_pressed & B_RIGHT) && home_sel[r] + 1 < shelf_n[r]) { home_sel[r]++; sound_play(SND_MOVE); }
+    if ((pad_pressed & B_LEFT) && home_sel[r] > 0) { home_sel[r]--; sound_play(SND_MOVE); }
 }
 
 s32 main(s32 argc, const char *argv[])
@@ -705,12 +1159,14 @@ s32 main(s32 argc, const char *argv[])
     log_step("covers ok");
     library_scan();
     log_step("library: PS1 %d, PS2 %d, PS3 %d", library[0].count, library[1].count, library[2].count);
+    lists_load();
     apply_sort();
     for (i = 0; i < PLAT_COUNT; i++) { sel[i] = 0; top_row[i] = 0; }
     /* open on the chosen console; if it has no games, the first one that does */
     plat = settings.open_on ? settings.open_on - 1 : settings.last_plat;
     if (!library[plat].count)
         for (i = 0; i < PLAT_COUNT; i++) if (library[i].count) { plat = i; break; }
+    set_tab(plat + 1);
 
     int frames = 0;
     while (1) {
@@ -718,60 +1174,77 @@ s32 main(s32 argc, const char *argv[])
         if (++frames % 600 == 0) log_step("still running, frame %d", frames);
         read_pads();
         covers_frame();
+        if (settings.sysinfo) sysinfo_poll();
         anim += 0.06f;
 
-        if (mode != 3 && !show_settings && disc_poll(&disc) && settings.disc_popup) { prev_mode = (mode == 2) ? 0 : mode; mode = 3; disc_choice = 0; }
+        if (mode != 3 && mode != 4 && mode != 5 && !show_settings && disc_poll(&disc) && settings.disc_popup) {
+            prev_mode = (mode == 2) ? 0 : mode; mode = 3; disc_choice = 0; sound_play(SND_TAB);
+        }
 
-        GameList *l = &library[plat];
+        Game *g = cur_game();
         if (mode == 3) {
-            if (pad_pressed & B_LEFT) disc_choice = 0;
-            if ((pad_pressed & B_RIGHT) && disc_can_install()) disc_choice = 1;
-            if (pad_pressed & B_CIRCLE) mode = prev_mode;
+            if ((pad_pressed & B_LEFT) && disc_choice) { disc_choice = 0; sound_play(SND_MOVE); }
+            if ((pad_pressed & B_RIGHT) && disc_can_install() && !disc_choice) { disc_choice = 1; sound_play(SND_MOVE); }
+            if (pad_pressed & B_CIRCLE) { mode = prev_mode; sound_play(SND_BACK); }
             else if (pad_pressed & B_CROSS) disc_action();
+        } else if (mode == 4) {
+            keyboard_input();
+        } else if (mode == 5) {
+            if ((pad_pressed & B_DOWN) && disc_pick + 1 < pick_game->ndiscs) { disc_pick++; sound_play(SND_MOVE); }
+            if ((pad_pressed & B_UP) && disc_pick > 0) { disc_pick--; sound_play(SND_MOVE); }
+            if (pad_pressed & B_CIRCLE) { mode = prev_mode; sound_play(SND_BACK); }
+            else if (pad_pressed & B_CROSS) {
+                const char *p = disc_pick == 0 ? pick_game->path : pick_game->discs[disc_pick - 1];
+                if (p[0]) start_disc(pick_game, disc_pick + 1);
+            }
         } else if (show_settings) {
             settings_window_input();
         } else if (mode == 0) {
-            int was = plat;
-            if (pad_pressed & B_R1) plat = (plat + 1) % PLAT_COUNT;
-            if (pad_pressed & B_L1) plat = (plat + PLAT_COUNT - 1) % PLAT_COUNT;
-            if (plat != was && settings.open_on == 0) { settings.last_plat = plat; settings_save(); }
-            if (pad_pressed & B_SELECT) { show_settings = 1; if (!set_selectable(set_row)) set_row = 1; }
-            l = &library[plat];
-            if (l->count) {
-                int s = sel[plat];
-                if ((pad_pressed & B_RIGHT) && s + 1 < l->count) s++;
-                if ((pad_pressed & B_LEFT) && s > 0) s--;
-                if ((pad_pressed & B_DOWN) && s + COLS < l->count) s += COLS;
-                else if ((pad_pressed & B_DOWN) && s / COLS < (l->count - 1) / COLS) s = l->count - 1;
-                if ((pad_pressed & B_UP) && s - COLS >= 0) s -= COLS;
-                sel[plat] = s;
-                if (pad_pressed & B_TRIANGLE) { mode = 1; info_scroll = 0; }
-                if (pad_pressed & B_CROSS) start_game(&l->games[sel[plat]]);
+            int t = tab;
+            if (pad_pressed & B_R1) t = (tab + 1) % 4;
+            if (pad_pressed & B_L1) t = (tab + 3) % 4;
+            if (t != tab) {
+                set_tab(t);
+                sound_play(SND_TAB);
+                if (t > 0 && settings.open_on == 0) { settings.last_plat = plat; settings_save(); }
+            }
+            if (pad_pressed & B_SELECT) { show_settings = 1; if (!set_selectable(set_row)) set_row = 1; sound_play(SND_TAB); }
+            if (ON_HOME) home_move(); else {
+                browse_move();
+                if (pad_pressed & B_L3) { mode = 4; kb_row = kb_col = 0; sound_play(SND_TAB); }
+                if (pad_pressed & B_R3) { settings.view = (settings.view + 1) % 3; top_row[plat] = 0; settings_save(); sound_play(SND_TAB); }
+            }
+            g = cur_game();
+            if (g) {
+                if (pad_pressed & B_SQUARE) { fav_toggle(g); sound_play(SND_STAR); if (ON_HOME) home_build(); }
+                if (pad_pressed & B_TRIANGLE) { mode = 1; info_scroll = 0; sound_play(SND_OK); }
+                else if (pad_pressed & B_CROSS) start_game(g);
             }
             if (pad_pressed & B_START) break;
         } else if (mode == 1) {
             if ((pad_pressed & B_DOWN) && info_scroll + info_lines_visible < info_lines_total) info_scroll++;
             if ((pad_pressed & B_UP) && info_scroll > 0) info_scroll--;
-            if (pad_pressed & (B_CIRCLE | B_TRIANGLE)) mode = 0;
-            else if (pad_pressed & B_CROSS) start_game(&l->games[sel[plat]]);
+            if (g && (pad_pressed & B_SQUARE)) { fav_toggle(g); sound_play(SND_STAR); }
+            if (pad_pressed & (B_CIRCLE | B_TRIANGLE)) { mode = 0; sound_play(SND_BACK); if (ON_HOME) home_build(); }
+            else if (g && (pad_pressed & B_CROSS)) start_game(g);
         } else {
             if (pad_pressed & (B_CIRCLE | B_CROSS)) mode = 0;
         }
 
         gfx_begin();
         gfx_background(anim * 0.2f);
-        if (mode == 1 || (mode == 3 && prev_mode == 1)) {
-            draw_info();
-        } else {
-            draw_nav();
-            draw_grid();
-        }
+        int under = (mode == 3 || mode == 5) ? prev_mode : mode;
+        if (under == 1) draw_info();
+        else draw_browse();
         if (mode == 3) draw_disc_popup();
+        if (mode == 4) draw_keyboard();
+        if (mode == 5) draw_disc_picker();
         if (show_settings) draw_settings_window();
         draw_hints();
         if (mode == 2) draw_message("webMAN MOD isn't responding",
                                     "The dashboard starts games through webMAN MOD. Check it is installed and enabled, then try again.  (Circle to close)");
         gfx_end();
     }
+    sound_shutdown();
     return 0;
 }
