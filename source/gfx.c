@@ -390,9 +390,8 @@ static float hash01(int i, int k)            /* fixed pseudo-random 0..1 per par
 }
 
 /* soft circle: bright centre fading to nothing at the rim, drawn as a fan of quads */
-static void soft_circle(float cx, float cy, float r, u32 rgb, int alpha)
+static void soft_circle(float cx, float cy, float r, u32 rgb, int alpha, int N)
 {
-    const int N = 16;
     u32 c0 = (rgb & 0xffffff00) | (u32) alpha, c1 = (rgb & 0xffffff00) | (u32) (alpha * 0.55f), c2 = rgb & 0xffffff00;
     float rm = r * 0.45f;
     int k;
@@ -418,26 +417,41 @@ static void draw_particles(float phase)
 {
     int i;
     u32 tint = gfx_accent(0xff) | 0xff;
-    /* big soft circles, slowly rising and swaying */
-    for (i = 0; i < 12; i++) {
-        float r = 40 + 100 * hash01(i, 1);
-        float speed = 9 + 14 * hash01(i, 2);                     /* px per phase unit */
+
+    /* a few very faint big circles far behind, drifting up */
+    for (i = 0; i < 5; i++) {
+        float r = 70 + 90 * hash01(i, 1);
         float span = SCREEN_H + 2 * r + 200;
-        float y = SCREEN_H + r - fmodf(hash01(i, 3) * span + phase * speed, span);
-        float x = hash01(i, 4) * SCREEN_W + 70 * sinf(phase * 0.35f + i * 1.3f);
-        int a = (int) (26 + 30 * hash01(i, 5));
-        float edge = fminf(1.0f, fminf(y + r, SCREEN_H + r - y) / 300.0f);     /* fade in / out */
-        if (edge > 0) soft_circle(x, y, r, tint, (int) (a * edge));
+        float y = SCREEN_H + r - fmodf(hash01(i, 3) * span + phase * (6 + 8 * hash01(i, 2)), span);
+        float x = hash01(i, 4) * SCREEN_W + 60 * sinf(phase * 0.3f + i * 1.3f);
+        float edge = fminf(1.0f, fminf(y + r, SCREEN_H + r - y) / 300.0f);
+        if (edge > 0) soft_circle(x, y, r, tint, (int) ((14 + 12 * hash01(i, 5)) * edge), 16);
     }
-    /* sparkles along the wave */
-    for (i = 0; i < 26; i++) {
-        float speed = 20 + 40 * hash01(i, 6);
-        float span = SCREEN_W + 120;
-        float x = fmodf(hash01(i, 7) * span + phase * speed, span) - 60;
-        float y = wave_y(x, phase, 14) + (hash01(i, 8) - 0.5f) * 150 + 12 * sinf(phase * 1.7f + i);
-        float twinkle = 0.45f + 0.55f * sinf(phase * 2.6f + i * 1.9f);
-        float r = 4 + 6 * hash01(i, 9);
-        if (twinkle > 0.05f) soft_circle(x, y, r * 2.2f, 0xffffffff, (int) (150 * twinkle));
+
+    /* lots of small sparkles: each appears somewhere new, fades in, flashes, fades out */
+    for (i = 0; i < 80; i++) {
+        float life = 2.0f + 3.0f * hash01(i, 10);              /* in phase units (~3-7 s) */
+        float t = (phase + hash01(i, 11) * life) / life;
+        int n = (int) t;                                        /* which life this is */
+        t -= n;                                                 /* 0..1 through this life */
+
+        /* new place every life: most gather around the wave, the rest anywhere */
+        float x = hash01(i * 7 + n, 12) * (SCREEN_W + 80) - 40;
+        float y;
+        if (hash01(i, 13) < 0.7f) y = wave_y(x, phase, 14) + (hash01(i * 7 + n, 14) - 0.5f) * 260;
+        else y = 120 + hash01(i * 7 + n, 15) * (SCREEN_H - 240);
+        x += (t - 0.5f) * 40 * (hash01(i, 16) - 0.3f);           /* slow drift while alive */
+        y -= t * 18;
+
+        float fade = sinf(t * 3.14159f); fade *= fade;          /* in and out */
+        float d = (t - 0.5f) / 0.07f;
+        float flash = expf(-d * d);                             /* the sparkle */
+        float r = 2.0f + 3.0f * hash01(i, 17);
+        int a = (int) (200 * fade * (0.35f + 0.65f * flash));
+        if (a < 4) continue;
+        soft_circle(x, y, r * (2.4f + 1.6f * flash), 0xffffffff, a, 10);
+        if (flash > 0.3f)                                       /* coloured glow round the brightest */
+            soft_circle(x, y, r * 7.0f, tint, (int) (60 * flash * fade), 12);
     }
 }
 

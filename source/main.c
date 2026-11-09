@@ -20,7 +20,7 @@
 #include "disc.h"
 #include "settings.h"
 
-#define APP_VERSION "v0.15"
+#define APP_VERSION "v0.16"
 
 /* ---------------------------------------------------------------- input */
 enum {
