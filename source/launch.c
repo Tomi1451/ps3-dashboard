@@ -29,7 +29,7 @@ static void url_encode(char *dst, size_t n, const char *src)
 }
 
 /* sends one request to webMAN; webMAN runs ";"-chained commands one after another, in the background */
-static int webman_send(const char *cmds)
+static int webman_send_wait(const char *cmds, int wait_s)
 {
     char req[1400];
     struct sockaddr_in sin;
@@ -51,7 +51,7 @@ static int webman_send(const char *cmds)
 
     /* webMAN answers only after the whole chain has run (after we exit), so don't wait long */
     {
-        struct timeval tv = { 1, 0 };
+        struct timeval tv = { wait_s, 0 };
         char buf[512];
         int got, total = 0;
         setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -60,6 +60,17 @@ static int webman_send(const char *cmds)
     }
     close(s);
     return 1;
+}
+
+static int webman_send(const char *cmds) { return webman_send_wait(cmds, 1); }
+
+/* mount only (no auto-start), and wait until webMAN has done it - it answers after mounting */
+int mount_only(const char *path)
+{
+    char enc[1024], cmds[1200];
+    url_encode(enc, sizeof(enc), path);
+    snprintf(cmds, sizeof(cmds), "/mount_ps3%s", enc);
+    return webman_send_wait(cmds, 15);
 }
 
 /* Chain run by webMAN after we exit:

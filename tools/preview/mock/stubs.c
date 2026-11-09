@@ -90,8 +90,8 @@ int disc_poll(DiscInfo *d)
 }
 #include "../../../source/settings.h"
 #include "../../../source/gfx.h"
-const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1 };
-Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1 };
+const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, "" };
+Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, "" };
 void settings_apply(void) { gfx_theme_set(settings.theme, settings.brightness, settings.wave); settings.font = gfx_font_set(settings.font); }
 void settings_load(void) { const char *t = getenv("PREVIEW_THEME"); if (t) settings.theme = atoi(t); t = getenv("PREVIEW_SIZE"); if (t) settings.cover_size = atoi(t); t = getenv("PREVIEW_VIEW"); if (t) settings.view = atoi(t); }
 void settings_save(void) {}
@@ -123,3 +123,8 @@ const char *rip_message(void) { return "Medievil [SCES-00311]"; }
 const char *rip_output(void) { return "/dev_hdd0/PSXISO/Medievil [SCES-00311]/Medievil [SCES-00311].bin"; }
 int disc_image_mounted(void) { return 0; }
 void disc_read_id(DiscInfo *d) {}
+#include "../../../source/direct.h"
+int ps1_cards(char names[][64], int max) { strcpy(names[0], "Main_Card.VM1"); strcpy(names[1], "Second.VM1"); return 2; }
+const char *ps1_card_in_use(void) { return settings.ps1_card[0] ? settings.ps1_card : "Main_Card.VM1"; }
+int direct_start(const Game *g, const char *p) { return 0; }
+int mount_only(const char *p) { return 1; }

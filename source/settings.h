@@ -16,6 +16,8 @@ typedef struct {
     int view;         /* 0 grid, 1 list, 2 large artwork */
     int sounds;       /* 1 = navigation sounds */
     int sysinfo;      /* 1 = free space and temperatures in the top bar */
+    int direct_ps1;   /* 1 = start PS1 games straight from the dashboard (no XMB in between) */
+    char ps1_card[64];/* memory card for slot 1 (file in /dev_hdd0/savedata/vmc), "" = automatic */
 } Settings;
 
 extern Settings settings;

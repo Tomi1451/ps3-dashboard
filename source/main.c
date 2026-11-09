@@ -25,6 +25,7 @@
 #include "sysinfo.h"
 #include "sound.h"
 #include "rip.h"
+#include "direct.h"
 #include <sys/systime.h>
 #include <sys/process.h>
 #include <lv2/process.h>
@@ -32,7 +33,7 @@
 #include <sys/file.h>
 #include <strings.h>
 
-#define APP_VERSION "v0.24"
+#define APP_VERSION "v0.25"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -727,7 +728,7 @@ static void draw_info(void)
 }
 
 /* ---------------------------------------------------------------- settings window */
-enum { S_HEADER, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT, S_VIEW, S_SOUNDS, S_SYSINFO };
+enum { S_HEADER, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT, S_VIEW, S_SOUNDS, S_SYSINFO, S_DIRECT, S_CARD };
 static const struct { int id; const char *label; const char *help; } set_items[] = {
     { S_HEADER, "APPEARANCE", NULL },
     { S_THEME,  "Background colour", "PlayStation colours: the PS3 XMB blue, the PlayStation logo colours, the face-button colours and the console finishes." },
@@ -742,6 +743,9 @@ static const struct { int id; const char *label; const char *help; } set_items[]
     { S_TITLES, "Game names under covers", "The selected game always shows its name." },
     { S_SORT,   "Sort order", "Order of the games in each library." },
     { S_OPEN,   "Open on", "Which library is shown when the dashboard starts." },
+    { S_HEADER, "STARTING GAMES", NULL },
+    { S_DIRECT, "Start games", "Directly: PS1 (and PS3) games start straight from here, no XMB in between. PS2 games always go through the XMB." },
+    { S_CARD,   "PS1 memory card", "Where PS1 saves go when games start directly - one of your cards from the XMB Memory Card Utility. Automatic = the one used last." },
     { S_HEADER, "DISCS", NULL },
     { S_DISC,   "Ask when a disc is inserted", "Shows Play / Install when you put a disc in. Turn off to leave discs to the XMB." },
     { S_HEADER, "SYSTEM", NULL },
@@ -771,6 +775,12 @@ static const char *set_value(int id, char *buf, size_t n)
         case S_VIEW:   return settings.view == 0 ? "Grid" : settings.view == 1 ? "List" : "Large artwork";
         case S_SOUNDS: return settings.sounds ? "On" : "Off";
         case S_SYSINFO:return settings.sysinfo ? "Show" : "Hide";
+        case S_DIRECT: return settings.direct_ps1 ? "Directly" : "Through the XMB";
+        case S_CARD:   {
+            const char *c = ps1_card_in_use();
+            if (settings.ps1_card[0] && !strcmp(c, settings.ps1_card)) return c;
+            snprintf(buf, n, "Automatic (%s)", c[0] ? c : "no card found");
+            return buf; }
         case S_RESCAN: snprintf(buf, n, "%d games", library[0].count + library[1].count + library[2].count); return buf;
         
     }
@@ -798,7 +808,7 @@ static void draw_settings_window(void)
     gfx_rect(wx, wy, ww, 4, gfx_accent(0xff));
     gfx_text(label_x, wy + 30, 44, 0xffffffff, "Settings");
     {
-        const char *about = "PS Dashboard " APP_VERSION "  \xB7  games start through webMAN MOD";
+        const char *about = "PS Dashboard " APP_VERSION "  \xB7  games are mounted by webMAN MOD";
         gfx_text(wx + ww - 60 - gfx_text_w(20, about), wy + 52, 20, 0xffffff80, about);
     }
 
@@ -888,6 +898,14 @@ static void settings_change(int d, int pressed_x)
         case S_VIEW:   settings.view = (settings.view + d + 3) % 3; top_row[plat] = 0; break;
         case S_SOUNDS: settings.sounds = !settings.sounds; break;
         case S_SYSINFO:settings.sysinfo = !settings.sysinfo; break;
+        case S_DIRECT: settings.direct_ps1 = !settings.direct_ps1; break;
+        case S_CARD: {                       /* Automatic, then each card in turn */
+            static char names[32][64];
+            int cnt = ps1_cards(names, 32), cur = -1, k;
+            for (k = 0; k < cnt; k++) if (!strcmp(names[k], settings.ps1_card)) cur = k;
+            cur += d; if (cur < -1) cur = cnt - 1; if (cur >= cnt) cur = -1;
+            if (cur < 0) settings.ps1_card[0] = 0; else strcpy(settings.ps1_card, names[cur]);
+            break; }
         case S_RESCAN: if (!pressed_x) return; rescan_library(); return;
         case S_RESET:
             if (!pressed_x) return;
@@ -978,12 +996,17 @@ static void start_disc(const Game *g, int disc_no)    /* disc_no 1..4 */
 {
     char line[220];
     const char *path = disc_no <= 1 ? g->path : g->discs[disc_no - 2];
-    if (g->ndiscs) snprintf(line, sizeof(line), "Starting %s (disc %d) ...  It opens by itself once the XMB has loaded - don't press any buttons.", g->title, disc_no);
-    else snprintf(line, sizeof(line), "Starting %s ...  It opens by itself once the XMB has loaded - don't press any buttons.", g->title);
+    int direct = settings.direct_ps1 && g->plat != PLAT_PS2;
+    if (g->ndiscs) snprintf(line, sizeof(line), "Starting %s (disc %d) ...%s", g->title, disc_no, direct ? "" : "  It opens by itself once the XMB has loaded - don't press any buttons.");
+    else snprintf(line, sizeof(line), "Starting %s ...%s", g->title, direct ? "" : "  It opens by itself once the XMB has loaded - don't press any buttons.");
     sound_play(SND_OK);
     gfx_begin(); gfx_background(anim * 0.2f); draw_message("Loading game", line); gfx_end();
     log_step("launch: %s", path);
     recent_add(g);
+    if (settings.direct_ps1 && g->plat != PLAT_PS2) {
+        direct_start(g, path);                   /* only comes back if it couldn't start the game */
+        log_step("direct start didn't work - going the XMB way");
+    }
     if (launch_path(path)) { log_step("webMAN accepted"); leave_app(); }
     log_step("webMAN not reachable");        /* webMAN mounts and starts the game after we exit */
     mode = 2;

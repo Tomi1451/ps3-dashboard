@@ -12,8 +12,8 @@
 
 #define SETTINGS_FILE "/dev_hdd0/game/PSDB00001/USRDIR/settings.txt"
 
-const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1 };
-Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1 };
+const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, "" };
+Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, "" };
 
 static const struct { const char *key; int *v; int lo, hi; } keys[] = {
     { "theme=",      &settings.theme,      0, 99 },
@@ -29,6 +29,7 @@ static const struct { const char *key; int *v; int lo, hi; } keys[] = {
     { "view=",       &settings.view,       0, 2 },
     { "sounds=",     &settings.sounds,     0, 1 },
     { "sysinfo=",    &settings.sysinfo,    0, 1 },
+    { "direct_ps1=", &settings.direct_ps1, 0, 1 },
 };
 #define NKEYS ((int) (sizeof(keys) / sizeof(keys[0])))
 
@@ -54,6 +55,10 @@ void settings_load(void)
             int v = atoi(p + strlen(keys[i].key));
             if (v >= keys[i].lo && v <= keys[i].hi) *keys[i].v = v;
         }
+        {   /* the memory card name is text */
+            const char *c = strstr(buf, "ps1_card=");
+            if (c) { int j = 0; c += 9; while (*c && *c != '\n' && *c != '\r' && j < 63) settings.ps1_card[j++] = *c++; settings.ps1_card[j] = 0; }
+        }
         log_step("settings loaded");
     }
     if (settings.theme >= gfx_theme_count()) settings.theme = 0;
@@ -67,6 +72,7 @@ void settings_save(void)
     s32 fd; u64 wrote = 0;
     int i, n = 0;
     for (i = 0; i < NKEYS; i++) n += snprintf(buf + n, sizeof(buf) - n, "%s%d\n", keys[i].key, *keys[i].v);
+    n += snprintf(buf + n, sizeof(buf) - n, "ps1_card=%s\n", settings.ps1_card);
     if (sysLv2FsOpen(SETTINGS_FILE, SYS_O_WRONLY | SYS_O_CREAT | SYS_O_TRUNC, &fd, 0666, NULL, 0) != 0) {
         log_step("settings: could not save to " SETTINGS_FILE);
         return;

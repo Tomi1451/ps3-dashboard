@@ -9,6 +9,7 @@ int launch_game(const Game *g);
 int launch_path(const char *path);       /* same, for one disc of a multi-disc game */
 int launch_disc(void);                    /* start the disc in the drive */
 int unmount_disc(void);
+int mount_only(const char *path);         /* mount a game image now (waits for webMAN) */
 int install_disc(const char *target);     /* copy the PS3 disc in the drive to <target> on the HDD */
 
 #endif
