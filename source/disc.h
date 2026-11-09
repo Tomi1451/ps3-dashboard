@@ -14,6 +14,7 @@ typedef struct {
 /* call once per frame; returns 1 on the frame a new disc is noticed (fills *d) */
 int  disc_poll(DiscInfo *d);
 const char *disc_name(int type);
-int  disc_image_mounted(void);     /* 1 yes, 0 no, -1 unknown */
+int  disc_image_mounted(void);
+void disc_read_id(DiscInfo *d);   /* re-read the ID from the real disc (after unmounting) */     /* 1 yes, 0 no, -1 unknown */
 
 #endif

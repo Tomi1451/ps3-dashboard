@@ -32,7 +32,7 @@
 #include <sys/file.h>
 #include <strings.h>
 
-#define APP_VERSION "v0.22"
+#define APP_VERSION "v0.23"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -1140,6 +1140,10 @@ static void rip_start(void)
         mode = 0;
         return;
     }
+    /* the ID read when the disc went in may have come from the mounted image (or not at all):
+       read it again from the real disc, so the copy can be checked against it */
+    disc.virt = 0;
+    disc_read_id(&disc);
     if (!rip_begin(disc.type == DISC_PS1 ? RIP_PS1 : RIP_PS2, rip_name, disc.id)) { mode = 7; return; }
     rip_t0 = now_ms();
     mode = 7;
@@ -1267,6 +1271,9 @@ s32 main(s32 argc, const char *argv[])
         gfx_begin(); gfx_background(0); gfx_text_center(SCREEN_W / 2, 500, 36, 0xffffffe0, "Loading your library..."); gfx_end();
     }
     log_step("first frame drawn");
+
+    /* a game image left mounted from last time hides any disc you put in - let it go */
+    if (disc_image_mounted() == 1) { log_step("start: a game image is still mounted, unmounting it"); unmount_disc(); }
 
     covers_init();
     log_step("covers ok");

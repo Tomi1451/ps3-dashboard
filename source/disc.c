@@ -105,3 +105,10 @@ int disc_image_mounted(void)
     if (get_disc_type(&real, &eff, &fake) != 0) return -1;
     return fake != 0;
 }
+
+/* the boot ID of the real disc, read once nothing is mounted over it */
+void disc_read_id(DiscInfo *d)
+{
+    if (d->type == DISC_PS1 || d->type == DISC_PS2) read_boot_id(d->id, sizeof(d->id));
+    log_step("disc: id now '%s'", d->id);
+}

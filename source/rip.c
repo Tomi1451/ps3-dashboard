@@ -201,6 +201,7 @@ int rip_begin(int type, const char *name, const char *id)
     R.out = -1;
 
     id_key(R.want_id, id);
+    log_step("rip: expecting game ID '%s'", R.want_id[0] ? R.want_id : "(unknown - can't double-check)");
     clean_name(clean, sizeof(clean), name);
     if (!clean[0]) strcpy(clean, id[0] ? id : "Disc");
     if (id[0] && !strstr(clean, id)) snprintf(R.fname, sizeof(R.fname), "%s [%s]", clean, id);   /* ID kept for covers / game info */
