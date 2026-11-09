@@ -51,6 +51,7 @@ float gfx_text(float x, float y, float size, u32 rgba, const char *s);
 float gfx_text_w(float size, const char *s);
 void  gfx_text_center(float cx, float y, float size, u32 rgba, const char *s);
 void  gfx_text_fit(float x, float y, float size, u32 rgba, const char *s, float max_w); /* adds "..." if too long */
+int   gfx_text_wrap_window(float x, float y, float size, u32 rgba, const char *s, float max_w, int first, int max_lines);
 float gfx_text_wrap(float x, float y, float size, u32 rgba, const char *s, float max_w, int max_lines);
 
 #endif

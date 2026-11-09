@@ -429,7 +429,7 @@ static void draw_particles(float phase)
     }
 
     /* lots of small sparkles: each appears somewhere new, fades in, flashes, fades out */
-    for (i = 0; i < 80; i++) {
+    for (i = 0; i < 110; i++) {
         float life = 2.0f + 3.0f * hash01(i, 10);              /* in phase units (~3-7 s) */
         float t = (phase + hash01(i, 11) * life) / life;
         int n = (int) t;                                        /* which life this is */
@@ -446,12 +446,12 @@ static void draw_particles(float phase)
         float fade = sinf(t * 3.14159f); fade *= fade;          /* in and out */
         float d = (t - 0.5f) / 0.07f;
         float flash = expf(-d * d);                             /* the sparkle */
-        float r = 2.0f + 3.0f * hash01(i, 17);
+        float r = 0.8f + 1.4f * hash01(i, 17);
         int a = (int) (200 * fade * (0.35f + 0.65f * flash));
         if (a < 4) continue;
-        soft_circle(x, y, r * (2.4f + 1.6f * flash), 0xffffffff, a, 10);
+        soft_circle(x, y, r * (2.2f + 1.3f * flash), 0xffffffff, a, 8);
         if (flash > 0.3f)                                       /* coloured glow round the brightest */
-            soft_circle(x, y, r * 7.0f, tint, (int) (60 * flash * fade), 12);
+            soft_circle(x, y, r * 5.0f, tint, (int) (45 * flash * fade), 10);
     }
 }
 
@@ -499,6 +499,36 @@ void gfx_text_fit(float x, float y, float size, u32 c, const char *s, float max_
 }
 
 /* word-wrap inside max_w, at most max_lines lines (last one gets "...") */
+/* word-wraps s and draws lines [first, first + max_lines); returns how many lines s needs in total */
+int gfx_text_wrap_window(float x, float y, float size, u32 c, const char *s, float max_w, int first, int max_lines)
+{
+    char line[256];
+    const char *p = s;
+    float lh = size * 1.18f;
+    int n = 0;
+    while (*p) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        int len = 0, last_space = -1;
+        while (p[len] && len < 250) {
+            memcpy(line, p, len + 1); line[len + 1] = 0;
+            if (gfx_text_w(size, line) > max_w) break;
+            if (p[len] == ' ') last_space = len;
+            len++;
+        }
+        int take = len;
+        if (p[len] && last_space > 0) take = last_space;
+        if (take == 0) take = 1;
+        if (n >= first && n < first + max_lines) {
+            memcpy(line, p, take); line[take] = 0;
+            gfx_text(x, y + (n - first) * lh, size, c, line);
+        }
+        n++;
+        p += take;
+    }
+    return n;
+}
+
 float gfx_text_wrap(float x, float y, float size, u32 c, const char *s, float max_w, int max_lines)
 {
     char line[256];

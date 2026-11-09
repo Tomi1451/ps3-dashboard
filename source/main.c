@@ -19,8 +19,9 @@
 #include "log.h"
 #include "disc.h"
 #include "settings.h"
+#include "info.h"
 
-#define APP_VERSION "v0.16"
+#define APP_VERSION "v0.17"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -147,10 +148,9 @@ static float hint_pill(float x, float y, const char *pill, const char *label)
 #define MARGIN_X   96.0f
 #define GRID_Y     330.0f
 /* cover size setting: small / medium / large */
-static const int   size_cols[3]  = { 8, 7, 5 };
 static const float size_cover[3] = { 178.0f, 204.0f, 250.0f };
 static const float size_row[3]   = { 266.0f, 292.0f, 330.0f };
-#define COLS       (size_cols[settings.cover_size])
+#define COLS       (cols_for(plat))
 #define CELL_W     ((SCREEN_W - 2 * MARGIN_X) / COLS)
 #define COVER_H    (size_cover[settings.cover_size])
 #define ROW_H      (size_row[settings.cover_size])
@@ -161,6 +161,15 @@ static const float plat_aspect[PLAT_COUNT] = { 1.0f, 0.70f, 0.86f };   /* PS1 je
 static const u32   plat_hue[PLAT_COUNT][2] = { { 0x545862ff, 0x1c1d22ff }, { 0x1d3fb8ff, 0x070d33ff }, { 0x46566eff, 0x10161fff } };
 
 static int plat = PLAT_PS1;
+static int info_scroll = 0;     /* first synopsis line shown on the Game info page */
+
+/* as many covers per row as fit with an even gap, so narrow PS2 cases sit closer together */
+static int cols_for(int p)
+{
+    float bh = size_cover[settings.cover_size], bw = bh * plat_aspect[p], gap = bh * 0.2f;
+    int n = (int) ((SCREEN_W - 2 * MARGIN_X + gap) / (bw + gap));
+    return n < 3 ? 3 : n > 12 ? 12 : n;
+}
 static int show_settings = 0, set_row = 0, set_top = 0;   /* Settings window (SELECT) */
 static int sel[PLAT_COUNT];
 static int top_row[PLAT_COUNT];
@@ -280,11 +289,14 @@ static void fact(float x, float y, const char *label, const char *value, float m
     gfx_text_fit(x, y + 30, 30, 0xffffffff, value, max_w);
 }
 
+static int info_lines_visible = 1, info_lines_total = 0;
+
 static void draw_info(void)
 {
     GameList *l = &library[plat];
     if (l->count == 0) { mode = 0; return; }
     const Game *g = &l->games[sel[plat]];
+    const GameInfo *gi = info_get(g);
     char buf[200];
 
     /* breadcrumb */
@@ -292,41 +304,67 @@ static void draw_info(void)
     bx = gfx_text(bx + 14, 56, 26, 0xffffff60, "\xBB");
     gfx_text_fit(bx + 14, 56, 26, 0xffffffff, g->title, 1300);
 
-    /* cover, never stretched, inside a 560 x 640 box */
+    /* cover, never stretched, inside a 560 x 600 box; install location under it */
     float box_w = 560, box_h = 600, cw, ch;
     float asp = plat_aspect[g->plat];
     const Texture *t = covers_get(g);
     if (t) asp = (float) t->w / (float) t->h;
     if (box_w / asp <= box_h) { cw = box_w; ch = box_w / asp; } else { ch = box_h; cw = box_h * asp; }
-    float cx = MARGIN_X + 20, cy = 190;
+    float cx = MARGIN_X + 20, cy = 150;
     gfx_rect(cx + 10, cy + 16, cw, ch, 0x00000080);
     if (t) gfx_image(t, cx, cy, cw, ch, 0xffffffff);
     else   draw_placeholder(g, cx, cy, cw, ch);
     gfx_frame(cx, cy, cw, ch, 1, 0xffffff40);
+    gfx_text(cx, cy + ch + 36, 17, 0xffffff8c, "INSTALL LOCATION");
+    gfx_text_wrap(cx, cy + ch + 64, 20, 0xffffffb0, g->path, box_w, 2);
 
     /* text column */
-    float x = MARGIN_X + 20 + box_w + 80, w = SCREEN_W - MARGIN_X - x, y = 190;
+    float x = MARGIN_X + 20 + box_w + 80, w = SCREEN_W - MARGIN_X - x, y = 150;
     float chip = gfx_text_w(17, plat_name(g->plat)) + 32;
     gfx_rect(x, y, chip, 38, 0xffffff24);
     gfx_frame(x, y, chip, 38, 1, 0xffffff40);
     gfx_text(x + 16, y + 8, 17, 0xffffffff, plat_name(g->plat));
-    y = gfx_text_wrap(x, y + 64, 64, 0xffffffff, g->title, w, 2);
+    y = gfx_text_wrap(x, y + 60, 58, 0xffffffff, g->title, w, 2);
 
     snprintf(buf, sizeof(buf), "%s%s%s", g->region[0] ? g->region : "", g->region[0] ? "   \xB7   " : "", format_name(g->format));
-    gfx_text(x, y + 6, 26, 0xffffffb0, buf);
+    gfx_text(x, y + 4, 24, 0xffffffb0, buf);
 
-    /* details card */
-    float ky = y + 70, kh = 330;
-    gfx_rect(x, ky, w, kh, 0x0000004a);
-    gfx_frame(x, ky, w, kh, 1, 0xffffff1c);
-    float col = (w - 80) / 3;
-    fact(x + 40,           ky + 34, "REGION",   g->region[0] ? g->region : "Unknown", col - 30);
-    fact(x + 40 + col,     ky + 34, "GAME ID",  g->id[0] ? g->id : "Not read yet", col - 30);
-    fact(x + 40 + col * 2, ky + 34, "FORMAT",   format_name(g->format), col - 30);
-    fact(x + 40,           ky + 124, "ARTWORK", g->cover[0] ? (t ? "Cover found" : "Loading...") : "No cover yet", col - 30);
-    fact(x + 40 + col,     ky + 124, "CONSOLE", plat_name(g->plat), col * 2 - 30);
-    gfx_text(x + 40, ky + 216, 17, 0xffffff8c, "INSTALL LOCATION");
-    gfx_text_wrap(x + 40, ky + 246, 22, 0xffffffd0, g->path, w - 80, 2);
+    /* facts: 3 x 2, blank when not known */
+    const char *id = g->id[0] ? g->id : gi->id;
+    float fy = y + 60, col = w / 3;
+    fact(x,           fy,      "DEVELOPER", gi->developer[0] ? gi->developer : "-", col - 30);
+    fact(x + col,     fy,      "PUBLISHER", gi->publisher[0] ? gi->publisher : "-", col - 30);
+    fact(x + col * 2, fy,      "RELEASED",  gi->release[0] ? gi->release : "-", col - 30);
+    fact(x,           fy + 86, "GENRE",     gi->genre[0] ? gi->genre : "-", col - 30);
+    fact(x + col,     fy + 86, "PLAYERS",   gi->players[0] ? gi->players : "-", col - 30);
+    fact(x + col * 2, fy + 86, "GAME ID",   id[0] ? id : "-", col - 30);
+
+    /* synopsis panel, fills the rest of the column, scrolls with up / down */
+    float sy = fy + 192, sh = FOOTER_Y - 40 - sy;
+    gfx_rect(x, sy, w, sh, gfx_theme_col(3, 0xc8));
+    gfx_frame(x, sy, w, sh, 1, 0xffffff1c);
+    gfx_text(x + 30, sy + 22, 17, 0xffffff8c, "ABOUT THIS GAME");
+    const float size = 23, lh = size * 1.18f;
+    info_lines_visible = (int) ((sh - 74) / lh);
+    if (info_lines_visible < 1) info_lines_visible = 1;
+    if (gi->synopsis[0]) {
+        info_lines_total = gfx_text_wrap_window(x + 30, sy + 58, size, 0xffffffe0, gi->synopsis, w - 80, info_scroll, info_lines_visible);
+        if (info_lines_total > info_lines_visible) {     /* scroll bar */
+            float th = sh - 74, a = (float) info_scroll / info_lines_total, b = (float) (info_scroll + info_lines_visible) / info_lines_total;
+            if (b > 1) b = 1;
+            gfx_rect(x + w - 18, sy + 58, 4, th, 0xffffff1a);
+            gfx_rect(x + w - 18, sy + 58 + th * a, 4, th * (b - a), 0xffffffa0);
+        }
+        if (gi->source[0]) {
+            snprintf(buf, sizeof(buf), "Info: %s", gi->source);
+            gfx_text(x + w - 30 - gfx_text_w(16, buf), sy + 24, 16, 0xffffff60, buf);
+        }
+    } else {
+        info_lines_total = 0;
+        gfx_text_wrap(x + 30, sy + 58, 23, 0xffffff90,
+                      "No description yet. Run GET_GAME_INFO.bat on your PC (in the Cover Art Tool folder) "
+                      "to add the synopsis, developer, publisher and release date for your games.", w - 80, 4);
+    }
 }
 
 /* ---------------------------------------------------------------- settings window */
@@ -338,7 +376,7 @@ static const struct { int id; const char *label; const char *help; } set_items[]
     { S_WAVE,   "Background animation", "Like the PS3 home screen: the moving wave, plus sparkles and soft circles floating past." },
     { S_FONT,   "Font", "The PS3's own system fonts. Fonts your firmware doesn't have are skipped." },
     { S_HEADER, "LIBRARY", NULL },
-    { S_SIZE,   "Cover size", "Small fits 8 covers a row, Medium 7 and Large 5." },
+    { S_SIZE,   "Cover size", "Smaller covers fit more games on each row." },
     { S_TITLES, "Game names under covers", "The selected game always shows its name." },
     { S_SORT,   "Sort order", "Order of the games in each library." },
     { S_OPEN,   "Open on", "Which library is shown when the dashboard starts." },
@@ -535,6 +573,7 @@ static void draw_hints(void)
     } else if (mode == 1) {
         x = hint(x, y, 'x', "Play");
         x = hint(x, y, 'o', "Back");
+        if (info_lines_total > info_lines_visible) x = hint_pill(x, y, "UP / DOWN", "Scroll");
     } else {
         x = hint(x, y, 'x', "Play");
         x = hint(x, y, 't', "Game info");
@@ -638,6 +677,7 @@ static void rescan_library(void)
     int p;
     gfx_begin(); gfx_background(anim * 0.2f); gfx_text_center(SCREEN_W / 2, 500, 36, 0xffffffe0, "Looking for games..."); gfx_end();
     covers_reset();
+    info_forget();
     library_scan();
     sorted_za = 0;
     apply_sort();
@@ -705,11 +745,13 @@ s32 main(s32 argc, const char *argv[])
                 else if ((pad_pressed & B_DOWN) && s / COLS < (l->count - 1) / COLS) s = l->count - 1;
                 if ((pad_pressed & B_UP) && s - COLS >= 0) s -= COLS;
                 sel[plat] = s;
-                if (pad_pressed & B_TRIANGLE) mode = 1;
+                if (pad_pressed & B_TRIANGLE) { mode = 1; info_scroll = 0; }
                 if (pad_pressed & B_CROSS) start_game(&l->games[sel[plat]]);
             }
             if (pad_pressed & B_START) break;
         } else if (mode == 1) {
+            if ((pad_pressed & B_DOWN) && info_scroll + info_lines_visible < info_lines_total) info_scroll++;
+            if ((pad_pressed & B_UP) && info_scroll > 0) info_scroll--;
             if (pad_pressed & (B_CIRCLE | B_TRIANGLE)) mode = 0;
             else if (pad_pressed & B_CROSS) start_game(&l->games[sel[plat]]);
         } else {

@@ -36,6 +36,8 @@ void library_scan(void)
     }
     add(PLAT_PS2, "BMX XXX", "", "/dev_hdd0/PS2ISO/BMX XXX.ISO", FMT_ISO, "");
     add(PLAT_PS2, "WARRIORS", "", "/dev_hdd0/PS2ISO/WARRIORS.ISO", FMT_ISO, "cover_ps2_1");
+    { static const char *ps2[] = { "Burnout 3", "Def Jam Fight for NY", "GTA San Andreas", "Jak and Daxter", "Kingdom Hearts", "Okami", "Ratchet and Clank", "Shadow of the Colossus", "SSX Tricky", "TimeSplitters 2", NULL };
+      for (i = 0; ps2[i]; i++) { snprintf(path, sizeof(path), "/dev_hdd0/PS2ISO/%s.iso", ps2[i]); snprintf(cov, sizeof(cov), (i % 4) ? "cover_ps2_%d" : "", i + 2); add(PLAT_PS2, ps2[i], "", path, FMT_ISO, cov); } }
     add(PLAT_PS3, "Uncharted 2: Among Thieves", "BCES00757", "/dev_hdd0/GAMES/Uncharted 2", FMT_FOLDER, "cover_ps3_0");
     add(PLAT_PS3, "Some PS3 Game", "BLES00932", "/dev_hdd0/PS3ISO/Some PS3 Game.iso", FMT_ISO, "");
 }
@@ -79,3 +81,15 @@ void settings_apply(void) { gfx_theme_set(settings.theme, settings.brightness, s
 void settings_load(void) { const char *t = getenv("PREVIEW_THEME"); if (t) settings.theme = atoi(t); t = getenv("PREVIEW_SIZE"); if (t) settings.cover_size = atoi(t); }
 void settings_save(void) {}
 void covers_reset(void) { ntex = 0; }
+#include "../../../source/info.h"
+/* sample info for the first PS1 game so the Game info page can be previewed */
+const GameInfo *info_get(const Game *g)
+{
+    static GameInfo gi; memset(&gi, 0, sizeof(gi));
+    if (getenv("PREVIEW_NOINFO")) return &gi;
+    gi.found = 1; strcpy(gi.id, "SLES-12345"); strcpy(gi.developer, "Sample Developer Studios"); strcpy(gi.publisher, "Sample Publisher");
+    strcpy(gi.release, "2000-11-24"); strcpy(gi.genre, "Racing; Action"); strcpy(gi.players, "1-2"); strcpy(gi.source, "LaunchBox Games Database");
+    for (int i = 0; i < 9; i++) strcat(gi.synopsis, "This is placeholder preview text standing in for a real synopsis, long enough to wrap over several lines. ");
+    return &gi;
+}
+void info_forget(void) {}
