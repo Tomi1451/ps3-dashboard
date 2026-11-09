@@ -104,3 +104,17 @@ int recent_list(Game **out, int max)
     }
     return n;
 }
+
+void recent_clear(void)
+{
+    nrecent = 0;
+    write_file(RECENT_FILE, "", 0);
+}
+
+void fav_clear(void)
+{
+    int p, i;
+    for (p = 0; p < PLAT_COUNT; p++)
+        for (i = 0; i < library[p].count; i++) library[p].games[i].fav = 0;
+    save_favs();
+}

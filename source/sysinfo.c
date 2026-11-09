@@ -1,17 +1,19 @@
-/* sysinfo.c - free space via sysFsGetFreeSize, temperatures via lv2 syscall 383
-   (the one webMAN uses). Anything the console won't tell us is just left out. */
+/* sysinfo.c - free space via syscall 840 and temperatures via syscall 383 (as webMAN does),
+   firmware from /dev_flash/vsh/etc/version.txt. Anything the console won't tell us is left out. */
 #include <stdio.h>
 #include <string.h>
 #include <ppu-lv2.h>
 #include <lv2/sysfs.h>
+#include <sys/file.h>
 
 #include "sysinfo.h"
+#include "launch.h"
 #include "log.h"
 
-static char text[96];
-static int  frame = 0, temps_ok = 1;
+static SysInfo info;
+static int frame = 0, temps_ok = 1, fw_done = 0;
 
-static int disk_free(const char *path, u64 *total, u64 *avail)   /* syscall 840, as webMAN does */
+static int disk_free(const char *path, u64 *total, u64 *avail)
 {
     lv2syscall3(840, (u64)(u32) path, (u64)(u32) total, (u64)(u32) avail);
     return_to_user_prog(int);
@@ -23,24 +25,42 @@ static int get_temp(u32 sensor, u32 *t)
     return_to_user_prog(int);
 }
 
-void sysinfo_poll(void)
+static void read_firmware(void)
 {
-    if (frame++ % 300) return;                  /* every ~5 seconds */
-    u64 total = 0, avail = 0, cpu = 0, rsx = 0;
-    u32 t;
-    int n = 0;
-    text[0] = 0;
-    if (disk_free("/dev_hdd0", &total, &avail) == 0 && total) {
-        double gb = (double) avail / (1024.0 * 1024.0 * 1024.0);
-        n += snprintf(text + n, sizeof(text) - n, "%.1f GB free", gb);
-    }
-    if (temps_ok) {
-        if (get_temp(0, &t) == 0) cpu = t >> 24; else temps_ok = 0;
-        if (temps_ok && get_temp(1, &t) == 0) rsx = t >> 24;
-        if (!temps_ok) log_step("sysinfo: temperature not readable, hiding it");
-    }
-    if (temps_ok && cpu > 0 && cpu < 120)
-        n += snprintf(text + n, sizeof(text) - n, "%sCPU %d\xB0" "C  RSX %d\xB0" "C", n ? "   \xB7   " : "", (int) cpu, (int) rsx);
+    char buf[128]; s32 fd; u64 got = 0;
+    fw_done = 1;
+    if (sysLv2FsOpen("/dev_flash/vsh/etc/version.txt", SYS_O_RDONLY, &fd, 0, NULL, 0) != 0) return;
+    sysLv2FsRead(fd, buf, sizeof(buf) - 1, &got);
+    sysLv2FsClose(fd);
+    buf[got] = 0;
+    char *p = strstr(buf, "release:");           /* "release:04.9100:" */
+    if (!p) return;
+    p += 8;
+    int maj = (p[0] - '0') * 10 + (p[1] - '0'), mn = (p[3] - '0') * 10 + (p[4] - '0');
+    snprintf(info.firmware, sizeof(info.firmware), "%d.%02d", maj, mn);
 }
 
-const char *sysinfo_text(void) { return text; }
+void sysinfo_poll(void)
+{
+    if (frame++ % 180) return;                  /* every ~3 seconds */
+    u64 total = 0, avail = 0;
+    u32 t;
+    int u;
+    sysFSStat st;
+    char p[24];
+
+    if (!fw_done) read_firmware();
+    info.have_space = (disk_free("/dev_hdd0", &total, &avail) == 0 && total);
+    if (info.have_space) { info.free_gb = avail / 1073741824.0; info.total_gb = total / 1073741824.0; }
+    if (temps_ok) {
+        if (get_temp(0, &t) == 0) info.cpu_c = t >> 24; else temps_ok = 0;
+        if (temps_ok && get_temp(1, &t) == 0) info.rsx_c = t >> 24;
+        if (!temps_ok) log_step("sysinfo: temperature not readable");
+    }
+    info.have_temp = temps_ok && info.cpu_c > 0 && info.cpu_c < 120;
+    info.usb_drives = 0;
+    for (u = 0; u < 8; u++) { snprintf(p, sizeof(p), "/dev_usb00%d", u); if (sysLv2FsStat(p, &st) == 0) info.usb_drives++; }
+    info.webman = webman_alive();
+}
+
+const SysInfo *sysinfo_get(void) { return &info; }

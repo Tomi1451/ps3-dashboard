@@ -70,7 +70,10 @@ int fav_list(Game **o, int m) { int p, i, n = 0; for (p = 0; p < PLAT_COUNT; p++
 void recent_add(const Game *g) {}
 int recent_list(Game **o, int m) { if (!getenv("PREVIEW_FAVS")) return 0; o[0] = &library[2].games[0]; o[1] = &library[0].games[8]; o[2] = &library[1].games[1]; o[3] = &library[0].games[12]; return 4; }
 void sysinfo_poll(void) {}
-const char *sysinfo_text(void) { return "214.6 GB free   \xB7   CPU 61\xB0" "C  RSX 54\xB0" "C"; }
+const SysInfo *sysinfo_get(void) { static SysInfo si = { 1, 214.6, 465.8, 1, 61, 54, "4.91", 1, 1 }; return &si; }
+void recent_clear(void) {} void fav_clear(void) {}
+int webman_command(const char *c) { return 1; }
+int webman_alive(void) { return 1; }
 void sound_enable(int on) {} void sound_play(int w) {} void sound_shutdown(void) {}
 void log_reset(void) {}
 void log_step(const char *fmt, ...) {}
@@ -90,8 +93,8 @@ int disc_poll(DiscInfo *d)
 }
 #include "../../../source/settings.h"
 #include "../../../source/gfx.h"
-const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, "" };
-Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, "" };
+const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "" };
+Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "" };
 void settings_apply(void) { gfx_theme_set(settings.theme, settings.brightness, settings.wave); settings.font = gfx_font_set(settings.font); }
 void settings_load(void) { const char *t = getenv("PREVIEW_THEME"); if (t) settings.theme = atoi(t); t = getenv("PREVIEW_SIZE"); if (t) settings.cover_size = atoi(t); t = getenv("PREVIEW_VIEW"); if (t) settings.view = atoi(t); }
 void settings_save(void) {}

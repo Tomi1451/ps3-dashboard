@@ -110,3 +110,23 @@ int unmount_disc(void)
 {
     return webman_send("/mount.ps3/unmount");
 }
+
+/* is webMAN MOD answering on 127.0.0.1:80? (connect only, nothing is sent) */
+int webman_alive(void)
+{
+    struct sockaddr_in sin;
+    int s, ok;
+    if (!net_ready) { netInitialize(); net_ready = 1; }
+    memset(&sin, 0, sizeof(sin));
+    sin.sin_family = AF_INET;
+    sin.sin_addr.s_addr = htonl(0x7F000001);
+    sin.sin_port = htons(80);
+    s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) return 0;
+    ok = connect(s, (struct sockaddr *) &sin, sizeof(sin)) == 0;
+    close(s);
+    return ok;
+}
+
+/* one-off webMAN command (eject, restart, shut down) */
+int webman_command(const char *cmd) { return webman_send(cmd); }

@@ -1,8 +1,16 @@
-/* sysinfo.h - free HDD space and CPU / RSX temperatures for the top bar */
+/* sysinfo.h - console details for the System section of Settings */
 #ifndef SYSINFO_H
 #define SYSINFO_H
 
-void        sysinfo_poll(void);     /* call every frame; reads the console every few seconds */
-const char *sysinfo_text(void);     /* e.g. "214.6 GB free  ·  CPU 61°C  RSX 54°C" */
+typedef struct {
+    int    have_space;  double free_gb, total_gb;
+    int    have_temp;   int cpu_c, rsx_c;
+    char   firmware[16];         /* "4.91" or "" */
+    int    usb_drives;
+    int    webman;               /* 1 running, 0 not answering */
+} SysInfo;
+
+void           sysinfo_poll(void);        /* call every frame while the info is on screen: refreshes every few seconds */
+const SysInfo *sysinfo_get(void);
 
 #endif

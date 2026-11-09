@@ -33,7 +33,7 @@
 #include <sys/file.h>
 #include <strings.h>
 
-#define APP_VERSION "v0.25"
+#define APP_VERSION "v0.26"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -317,8 +317,7 @@ static void draw_nav(void)
     }
     for (t = 0; t < PLAT_COUNT; t++) total += library[t].count;
     char buf[160];
-    const char *si = settings.sysinfo ? sysinfo_text() : "";
-    snprintf(buf, sizeof(buf), "%d games%s%s", total, si[0] ? "   \xB7   " : "", si);
+    snprintf(buf, sizeof(buf), "%d games in your library", total);
     gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(22, buf), 70, 22, 0xffffffa0, buf);
 }
 
@@ -728,7 +727,10 @@ static void draw_info(void)
 }
 
 /* ---------------------------------------------------------------- settings window */
-enum { S_HEADER, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT, S_VIEW, S_SOUNDS, S_SYSINFO, S_DIRECT, S_CARD };
+enum { S_HEADER, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT,
+       S_VIEW, S_SOUNDS, S_DIM, S_DIRECT, S_CARD, S_CLEAR_RECENT, S_CLEAR_FAVS, S_EJECT,
+       S_I_SPACE, S_I_TEMP, S_I_FW, S_I_WEBMAN, S_I_GAMES, S_I_USB, S_I_VERSION,
+       S_P_EXIT, S_P_RESTART, S_P_SHUTDOWN };
 static const struct { int id; const char *label; const char *help; } set_items[] = {
     { S_HEADER, "APPEARANCE", NULL },
     { S_THEME,  "Background colour", "PlayStation colours: the PS3 XMB blue, the PlayStation logo colours, the face-button colours and the console finishes." },
@@ -736,22 +738,42 @@ static const struct { int id; const char *label; const char *help; } set_items[]
     { S_WAVE,   "Background animation", "Like the PS3 home screen: the moving wave, plus sparkles and soft circles floating past." },
     { S_FONT,   "Font", "The PS3's own system fonts. Fonts your firmware doesn't have are skipped." },
     { S_SOUNDS, "Navigation sounds", "Soft clicks and chimes as you move around. Made by the dashboard itself." },
-    { S_SYSINFO,"Console info in the top bar", "Free space on the internal HDD and the CPU / RSX temperatures, updated every few seconds." },
+    { S_DIM,    "Dim the screen when idle", "Darkens the screen after a while with no buttons pressed, to look after your TV. Any button brings it back." },
     { S_HEADER, "LIBRARY", NULL },
     { S_VIEW,   "Library view", "Grid of covers, a list, or one large cover at a time. R3 switches view from the library too." },
     { S_SIZE,   "Cover size", "Smaller covers fit more games on each row (grid view)." },
     { S_TITLES, "Game names under covers", "The selected game always shows its name." },
     { S_SORT,   "Sort order", "Order of the games in each library." },
-    { S_OPEN,   "Open on", "Which library is shown when the dashboard starts." },
+    { S_OPEN,   "Open on", "Which tab is shown when the dashboard starts." },
+    { S_RESCAN, "Rescan library", "Press X to look for new games on the HDD and USB drives (after copying games over FTP)." },
+    { S_CLEAR_RECENT, "Clear recently played", "Press X twice to empty the Recently played shelf on Home. Your games aren't touched." },
+    { S_CLEAR_FAVS,   "Clear favourites", "Press X twice to remove every star. Your games aren't touched." },
     { S_HEADER, "STARTING GAMES", NULL },
     { S_DIRECT, "Start games", "Directly: PS1 (and PS3) games start straight from here, no XMB in between. PS2 games always go through the XMB." },
     { S_CARD,   "PS1 memory card", "Where PS1 saves go when games start directly - one of your cards from the XMB Memory Card Utility. Automatic = the one used last." },
     { S_HEADER, "DISCS", NULL },
-    { S_DISC,   "Ask when a disc is inserted", "Shows Play / Install when you put a disc in. Turn off to leave discs to the XMB." },
+    { S_DISC,   "Ask when a disc is inserted", "Shows Play / Install / Make ISO when you put a disc in. Turn off to leave discs to the XMB." },
+    { S_EJECT,  "Eject disc", "Press X to eject the disc in the drive (through webMAN MOD)." },
     { S_HEADER, "SYSTEM", NULL },
-    { S_RESCAN, "Rescan library", "Press X to look for new games on the HDD (after copying games over FTP)." },
-    { S_RESET,  "Reset all settings", "Press X to put every setting back to how it started." },
+    { S_I_SPACE,  "Internal HDD", "Free space on the internal hard drive." },
+    { S_I_TEMP,   "Temperature", "CPU and RSX (graphics chip) temperatures, updated every few seconds." },
+    { S_I_FW,     "System software", "The firmware version installed on this PS3." },
+    { S_I_WEBMAN, "webMAN MOD", "PS Dashboard mounts and starts games through webMAN MOD - it needs to be running." },
+    { S_I_GAMES,  "Games in your library", "PS1, PS2 and PS3 games found on the internal HDD and USB drives." },
+    { S_I_USB,    "USB drives", "USB storage connected right now. Games on them show up in the library." },
+    { S_I_VERSION,"PS Dashboard", "The version of this dashboard." },
+    { S_HEADER, "POWER", NULL },
+    { S_P_EXIT,     "Exit to the XMB", "Press X to close PS Dashboard." },
+    { S_P_RESTART,  "Restart the console", "Press X twice to restart the PS3." },
+    { S_P_SHUTDOWN, "Turn off the console", "Press X twice to turn the PS3 off." },
+    { S_RESET,      "Reset all settings", "Press X twice to put every setting back to how it started." },
 };
+static void draw_message(const char *title, const char *line);
+static int is_info(int id) { return id >= S_I_SPACE && id <= S_I_VERSION; }
+static int is_action(int id) { return id == S_RESCAN || id == S_RESET || id == S_CLEAR_RECENT || id == S_CLEAR_FAVS || id == S_EJECT || (id >= S_P_EXIT && id <= S_P_SHUTDOWN); }
+static int needs_confirm(int id) { return id == S_RESET || id == S_CLEAR_RECENT || id == S_CLEAR_FAVS || id == S_P_RESTART || id == S_P_SHUTDOWN; }
+static int confirm_id = -1;           /* action waiting for its second X */
+static int exit_requested = 0, dimmed = 0;
 #define SET_COUNT ((int) (sizeof(set_items) / sizeof(set_items[0])))
 
 static void apply_sort(void);
@@ -774,7 +796,18 @@ static const char *set_value(int id, char *buf, size_t n)
         case S_DISC:   return settings.disc_popup ? "On" : "Off";
         case S_VIEW:   return settings.view == 0 ? "Grid" : settings.view == 1 ? "List" : "Large artwork";
         case S_SOUNDS: return settings.sounds ? "On" : "Off";
-        case S_SYSINFO:return settings.sysinfo ? "Show" : "Hide";
+        case S_DIM:    return settings.dim == 0 ? "Off" : settings.dim == 1 ? "After 5 minutes" : settings.dim == 2 ? "After 15 minutes" : "After 30 minutes";
+        case S_I_SPACE: { const SysInfo *si = sysinfo_get();
+            if (!si->have_space) return "-";
+            snprintf(buf, n, "%.1f GB free of %.0f GB", si->free_gb, si->total_gb); return buf; }
+        case S_I_TEMP: { const SysInfo *si = sysinfo_get();
+            if (!si->have_temp) return "Not available";
+            snprintf(buf, n, "CPU %d\xB0" "C   RSX %d\xB0" "C", si->cpu_c, si->rsx_c); return buf; }
+        case S_I_FW:   { const SysInfo *si = sysinfo_get(); return si->firmware[0] ? si->firmware : "-"; }
+        case S_I_WEBMAN: return sysinfo_get()->webman ? "Running" : "Not answering";
+        case S_I_GAMES:  snprintf(buf, n, "PS1 %d  \xB7  PS2 %d  \xB7  PS3 %d", library[0].count, library[1].count, library[2].count); return buf;
+        case S_I_USB:    { int u = sysinfo_get()->usb_drives; if (!u) return "None"; snprintf(buf, n, "%d connected", u); return buf; }
+        case S_I_VERSION:return APP_VERSION;
         case S_DIRECT: return settings.direct_ps1 ? "Directly" : "Through the XMB";
         case S_CARD:   {
             const char *c = ps1_card_in_use();
@@ -782,6 +815,7 @@ static const char *set_value(int id, char *buf, size_t n)
             snprintf(buf, n, "Automatic (%s)", c[0] ? c : "no card found");
             return buf; }
         case S_RESCAN: snprintf(buf, n, "%d games", library[0].count + library[1].count + library[2].count); return buf;
+        case S_CLEAR_RECENT: case S_CLEAR_FAVS: case S_EJECT: case S_P_EXIT: case S_P_RESTART: case S_P_SHUTDOWN: case S_RESET: return "";
         
     }
     return "";
@@ -796,8 +830,8 @@ static void draw_settings_window(void)
     char buf[64];
     const float ww = 1320, wh = 760, wx = (SCREEN_W - ww) / 2, wy = (SCREEN_H - wh) / 2;   /* centred */
     const float list_top = wy + 112, list_bottom = wy + wh - 112;
-    const float label_x = wx + 60, label_w = 690;
-    const float box_x = wx + 790, box_w = ww - 790 - 60;
+    const float label_x = wx + 60, label_w = 620;
+    const float box_x = wx + 700, box_w = ww - 700 - 60;
     const float ROW = 56, HEAD = 50;
     int i;
 
@@ -842,10 +876,14 @@ static void draw_settings_window(void)
 
         const char *v = set_value(id, buf, sizeof(buf));
         u32 vc = on ? 0xffffffff : 0xffffffa0;
-        if (id == S_RESCAN || id == S_RESET) {
-            const char *t = on ? "Press X" : (id == S_RESCAN ? v : "");
+        if (is_action(id)) {
+            const char *t = on ? (confirm_id == id ? "Press X again to confirm" : "Press X") : (id == S_RESCAN ? v : "");
             float tw = gfx_text_w(22, t);
-            gfx_text(box_x + box_w - 44 - tw, y + 16, 22, on ? 0xffffffd0 : 0xffffff80, t);
+            gfx_text(box_x + box_w - 44 - tw, y + 16, 22, on ? (confirm_id == id ? 0xffd84aff : 0xffffffd0) : 0xffffff80, t);
+        } else if (is_info(id)) {
+            float tw = gfx_text_w(24, v), maxw = box_w - 44;
+            if (tw > maxw) tw = maxw;
+            gfx_text_fit(box_x + box_w - 44 - tw, y + 14, 24, on ? 0xffffffff : 0xffffffb8, v, maxw);
         } else {
             float inner_x = box_x + 44, inner_w = box_w - 88;     /* room for < and > */
             float sw = (id == S_THEME) ? 46 : 0;                 /* colour swatch before the name */
@@ -854,7 +892,7 @@ static void draw_settings_window(void)
             float tx = inner_x + inner_w - tw;                   /* right-aligned inside the box */
             if (id == S_THEME) gfx_rect(tx - sw, y + 15, 32, 24, gfx_theme_swatch(settings.theme));
             gfx_text_fit(tx, y + 13, 26, vc, v, inner_w - sw);
-            if (on && id != S_ABOUT) {
+            if (on) {
                 gfx_text(box_x + 6, y + 13, 26, 0xffffffb0, "<");
                 gfx_text(box_x + box_w - 22, y + 13, 26, 0xffffffb0, ">");
             }
@@ -897,7 +935,7 @@ static void settings_change(int d, int pressed_x)
         case S_DISC:   settings.disc_popup = !settings.disc_popup; break;
         case S_VIEW:   settings.view = (settings.view + d + 3) % 3; top_row[plat] = 0; break;
         case S_SOUNDS: settings.sounds = !settings.sounds; break;
-        case S_SYSINFO:settings.sysinfo = !settings.sysinfo; break;
+        case S_DIM:    settings.dim = (settings.dim + d + 4) % 4; break;
         case S_DIRECT: settings.direct_ps1 = !settings.direct_ps1; break;
         case S_CARD: {                       /* Automatic, then each card in turn */
             static char names[32][64];
@@ -907,8 +945,22 @@ static void settings_change(int d, int pressed_x)
             if (cur < 0) settings.ps1_card[0] = 0; else strcpy(settings.ps1_card, names[cur]);
             break; }
         case S_RESCAN: if (!pressed_x) return; rescan_library(); return;
-        case S_RESET:
+        case S_EJECT:  if (!pressed_x) return; webman_command("/eject.ps3"); return;
+        case S_P_EXIT: if (!pressed_x) return; exit_requested = 1; return;
+        case S_CLEAR_RECENT: case S_CLEAR_FAVS: case S_P_RESTART: case S_P_SHUTDOWN: case S_RESET:
             if (!pressed_x) return;
+            if (confirm_id != id) { confirm_id = id; return; }      /* first X: ask again */
+            confirm_id = -1;
+            if (id == S_CLEAR_RECENT) { recent_clear(); home_build(); return; }
+            if (id == S_CLEAR_FAVS) { fav_clear(); home_build(); return; }
+            if (id == S_P_RESTART || id == S_P_SHUTDOWN) {
+                gfx_begin(); gfx_background(anim * 0.2f);
+                draw_message(id == S_P_RESTART ? "Restarting" : "Turning off", "Asking webMAN MOD...");
+                gfx_end();
+                sound_shutdown();
+                webman_command(id == S_P_RESTART ? "/restart.ps3" : "/shutdown.ps3");
+                return;
+            }
             settings = settings_defaults; apply_sort();
             break;
         default: return;
@@ -920,9 +972,10 @@ static void settings_change(int d, int pressed_x)
 static void settings_window_input(void)
 {
     int i;
-    if (pad_pressed & (B_SELECT | B_CIRCLE)) { show_settings = 0; sound_play(SND_BACK); return; }
+    if (pad_pressed & (B_SELECT | B_CIRCLE)) { show_settings = 0; confirm_id = -1; sound_play(SND_BACK); return; }
     if (pad_pressed & (B_UP | B_DOWN)) sound_play(SND_MOVE);
     if (pad_pressed & (B_LEFT | B_RIGHT | B_CROSS)) sound_play(SND_TAB);
+    if (pad_pressed & (B_UP | B_DOWN | B_LEFT | B_RIGHT)) confirm_id = -1;
     if (pad_pressed & B_DOWN) for (i = set_row + 1; i < SET_COUNT; i++) if (set_selectable(i)) { set_row = i; break; }
     if (pad_pressed & B_UP)   for (i = set_row - 1; i >= 0; i--)        if (set_selectable(i)) { set_row = i; break; }
     if (pad_pressed & B_RIGHT) settings_change(1, 0);
@@ -1317,7 +1370,15 @@ s32 main(s32 argc, const char *argv[])
         if (++frames % 600 == 0) log_step("still running, frame %d", frames);
         read_pads();
         covers_frame();
-        if (settings.sysinfo) sysinfo_poll();
+        {   /* idle dimming: any button wakes it and is swallowed */
+            static int idle = 0;
+            static const int limit[4] = { 0, 5 * 3600, 15 * 3600, 30 * 3600 };
+            if (pad_pressed || mode == 7) { if (idle > limit[settings.dim] && settings.dim) pad_pressed = 0; idle = 0; }
+            else idle++;
+            dimmed = settings.dim && idle > limit[settings.dim];
+        }
+        if (exit_requested) break;
+        if (show_settings) sysinfo_poll();
         anim += 0.06f;
 
         if (mode != 3 && mode != 4 && mode != 5 && mode != 7 && !show_settings && disc_poll(&disc) && settings.disc_popup) {
@@ -1387,6 +1448,7 @@ s32 main(s32 argc, const char *argv[])
         if (mode == 7) draw_rip();
         if (show_settings) draw_settings_window();
         draw_hints();
+        if (dimmed) gfx_rect(0, 0, SCREEN_W, SCREEN_H, 0x000000d8);
         if (mode == 2) draw_message("webMAN MOD isn't responding",
                                     "The dashboard starts games through webMAN MOD. Check it is installed and enabled, then try again.  (Circle to close)");
         gfx_end();
