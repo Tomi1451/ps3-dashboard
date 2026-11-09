@@ -121,3 +121,4 @@ u64 rip_bytes_done(void) { return 271ULL << 20; }
 u64 rip_bytes_total(void) { return 734ULL << 20; }
 const char *rip_message(void) { return "Medievil [SCES-00311]"; }
 const char *rip_output(void) { return "/dev_hdd0/PSXISO/Medievil [SCES-00311]/Medievil [SCES-00311].bin"; }
+int disc_image_mounted(void) { return 0; }

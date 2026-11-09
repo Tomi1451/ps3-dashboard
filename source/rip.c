@@ -115,7 +115,38 @@ static struct {
     u8  *buf;
     int  retries;
     int  created, made_dir;          /* only ever delete what we made */
+    char want_id[24];                /* game ID of the disc in the drive */
+    int  id_checked;
 } R;
+
+/* "SCES_003.11" / "SCES-00311" -> "SCES00311" */
+static void id_key(char *dst, const char *src)
+{
+    int j = 0;
+    for (; *src && j < 15; src++)
+        if ((*src >= 'A' && *src <= 'Z') || (*src >= '0' && *src <= '9')) dst[j++] = *src;
+        else if (*src >= 'a' && *src <= 'z') dst[j++] = *src - 32;
+    dst[j] = 0;
+}
+
+/* looks for SYSTEM.CNF's "cdrom:\\SCES_003.11;1" in what was just read; 1 = found (id filled) */
+static int find_boot_id(const u8 *buf, u32 len, char *id)
+{
+    u32 i;
+    for (i = 0; i + 24 < len; i++) {
+        if (buf[i] != 'c' || memcmp(buf + i, "cdrom", 5)) continue;
+        const u8 *p = buf + i + 5;
+        int k = 0;
+        while (k < 4 && *p != '\\' && *p != ':') { p++; k++; }
+        while (*p == '\\' || *p == ':') p++;
+        char raw[24]; int j = 0;
+        while (j < 20 && p[j] && p[j] != ';' && p[j] > ' ') { raw[j] = p[j]; j++; }
+        raw[j] = 0;
+        id_key(id, raw);
+        if (strlen(id) >= 8) return 1;
+    }
+    return 0;
+}
 
 const char *rip_message(void) { return R.msg; }
 int  rip_active(void)         { return R.active; }
@@ -169,6 +200,7 @@ int rip_begin(int type, const char *name, const char *id)
     R.type = type;
     R.out = -1;
 
+    id_key(R.want_id, id);
     clean_name(clean, sizeof(clean), name);
     if (!clean[0]) strcpy(clean, id[0] ? id : "Disc");
     if (id[0] && !strstr(clean, id)) snprintf(R.fname, sizeof(R.fname), "%s [%s]", clean, id);   /* ID kept for covers / game info */
@@ -301,6 +333,22 @@ int rip_step(void)
         return fail(R.msg, r);
     }
     R.retries = 0;
+    /* make sure this really is the disc in the drive (a game image left mounted by webMAN
+       would be read instead): its SYSTEM.CNF must name the same game ID */
+    if (!R.id_checked && R.want_id[0]) {
+        char found[24];
+        if (find_boot_id(R.buf, got * R.sector, found)) {
+            R.id_checked = 1;
+            log_step("rip: disc says %s, expected %s", found, R.want_id);
+            if (strcmp(found, R.want_id)) {
+                snprintf(R.msg, sizeof(R.msg), "Stopped: the drive gave a different game (%s) instead of %s. A mounted game image was probably in the way - try again.", found, R.want_id);
+                return fail(R.msg, 0);
+            }
+        } else if (R.pos > 4000) {
+            R.id_checked = 1;
+            log_step("rip: couldn't find the boot file to double-check the game ID");
+        }
+    }
     r = sysLv2FsWrite(R.out, R.buf, (u64) got * R.sector, &w);
     if (r || w != (u64) got * R.sector) return fail("Couldn't write to the HDD", r);
     R.pos += got;

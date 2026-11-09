@@ -97,3 +97,11 @@ int disc_poll(DiscInfo *d)
              d->virt ? "  (game image mounted over it)" : "", first ? "  (already in at start)" : "");
     return d->type != DISC_OTHER;
 }
+
+/* 1 if Cobra has a game image mounted over the drive (reads would come from the image) */
+int disc_image_mounted(void)
+{
+    u32 real = 0, eff = 0, fake = 0;
+    if (get_disc_type(&real, &eff, &fake) != 0) return -1;
+    return fake != 0;
+}

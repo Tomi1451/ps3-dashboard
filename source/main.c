@@ -32,7 +32,7 @@
 #include <sys/file.h>
 #include <strings.h>
 
-#define APP_VERSION "v0.21"
+#define APP_VERSION "v0.22"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -1123,8 +1123,23 @@ static u64 now_ms(void) { u64 sec = 0, ns = 0; sysGetCurrentTime(&sec, &ns); ret
 static void rip_start(void)
 {
     gfx_begin(); gfx_background(anim * 0.2f); draw_message("Getting the disc ready", "Making sure nothing else is using the drive..."); gfx_end();
-    unmount_disc();                              /* a mounted game image would hide the real disc */
-    sleep(2);
+    /* a mounted game image would be read instead of the real disc - make sure it's gone */
+    int tries, m = 1;
+    for (tries = 0; tries < 5; tries++) {
+        unmount_disc();
+        sleep(2);
+        m = disc_image_mounted();
+        log_step("rip: game image still mounted = %d", m);
+        if (m <= 0) break;
+    }
+    if (m == 1) {
+        gfx_begin(); gfx_background(anim * 0.2f);
+        draw_message("Couldn't free the drive", "A game image is still mounted and would be copied instead of your disc. Restart the console and try again.");
+        gfx_end();
+        sleep(4);
+        mode = 0;
+        return;
+    }
     if (!rip_begin(disc.type == DISC_PS1 ? RIP_PS1 : RIP_PS2, rip_name, disc.id)) { mode = 7; return; }
     rip_t0 = now_ms();
     mode = 7;
