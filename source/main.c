@@ -33,7 +33,7 @@
 #include <sys/file.h>
 #include <strings.h>
 
-#define APP_VERSION "v0.28"
+#define APP_VERSION "v0.29"
 
 /* ---------------------------------------------------------------- input */
 enum {

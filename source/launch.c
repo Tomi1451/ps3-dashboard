@@ -92,7 +92,7 @@ int launch_path(const char *path)
 /* real disc in the drive: drop any mounted game image so the XMB sees the disc, then start it */
 int launch_disc(void)
 {
-    return webman_send("/mount.ps3/unmount;/wait.ps3?xmb;/wait.ps3?3;/play.ps3");
+    return webman_send("/mount_ps3/unmount;/wait.ps3?xmb;/wait.ps3?3;/play.ps3");
 }
 
 /* PS3 disc -> folder game on the HDD, copied by webMAN (it decrypts the disc as it copies and
@@ -101,14 +101,16 @@ int install_disc(const char *target)
 {
     char enc[600], cmds[800];
     url_encode(enc, sizeof(enc), target);
-    snprintf(cmds, sizeof(cmds), "/mount.ps3/unmount;/wait.ps3?xmb;/wait.ps3?3;/copy.ps3/dev_bdvd&to=%s", enc);
+    snprintf(cmds, sizeof(cmds), "/mount_ps3/unmount;/wait.ps3?xmb;/wait.ps3?3;/copy.ps3/dev_bdvd&to=%s", enc);
     return webman_send(cmds);
 }
 
-/* drop any mounted game image so the real disc in the drive is what other apps see */
+/* drop any mounted game image so the real disc in the drive is what other apps see.
+   Note: "/mount.ps3/unmount" is ignored by webMAN unless the XMB is on screen - while an app
+   (us) is running only the "/mount_ps3/unmount" form unmounts. */
 int unmount_disc(void)
 {
-    return webman_send("/mount.ps3/unmount");
+    return webman_send("/mount_ps3/unmount");
 }
 
 /* is webMAN MOD answering on 127.0.0.1:80? (connect only, nothing is sent) */
