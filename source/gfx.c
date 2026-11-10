@@ -121,6 +121,8 @@ int gfx_font_set(int want)
         ResetFont();
         memset(adv, 0, sizeof(adv));
         u8 *end = AddFontFromTTF(font_mem, 32, 255, FONT_CELL, FONT_CELL, ttf_to_bitmap);
+        SetFontScreenLimits(SCREEN_W, SCREEN_H);
+        SetFontZ(1000.0f);
         FT_Done_Face(ft_face);
         if (tex_mem_ptr == font_mem) tex_mem_ptr = end;   /* first load reserves the space */
         font_ok = 1;
@@ -473,6 +475,7 @@ float gfx_text_w(float size, const char *s)
 float gfx_text(float x, float y, float size, u32 c, const char *s)
 {
     if (!font_ok) return x;
+    SetFontZ(1000.0f);          /* same depth as panels, or text shows through them (ResetFont sets it back to 0) */
     SetFontSize((int) size, (int) size);
     SetFontColor(c, 0x00000000);
     SetFontAutoCenter(0);
