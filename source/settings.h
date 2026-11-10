@@ -15,6 +15,7 @@ typedef struct {
     int disc_popup;   /* 1 = ask what to do when a disc goes in */
     int view;         /* 0 grid, 1 list, 2 large artwork */
     int sounds;       /* 1 = navigation sounds */
+    int bg_theme;     /* 0 PS3, 1 PS2, 2 PS1, 3 match the console tab */
     int dim;          /* dim when idle: 0 off, 1 5 min, 2 15 min, 3 30 min */
     int direct_ps1;   /* 1 = start PS1 games straight from the dashboard (no XMB in between) */
     char ps1_card[64];/* memory card for slot 1 (file in /dev_hdd0/savedata/vmc), "" = automatic */
