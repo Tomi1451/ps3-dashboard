@@ -292,30 +292,13 @@ void gfx_theme_set(int t, int brightness, int wave)
 }
 
 /* level 0 = gradient centre ... 3 = darkest edge; used for panels and the footer */
-/* background style: 0 PS3 XMB (colour setting applies), 1 PS1 inspired, 2 PS2 inspired */
-static int bg_style = 0;
-static const u32 ps1_pal[4] = { 0x5a5c66ff, 0x34353cff, 0x1c1d22ff, 0x0b0b0eff };
-static const u32 ps2_pal[4] = { 0x1a3a8cff, 0x0b1c4dff, 0x050c24ff, 0x01030bff };
-void gfx_bg_style(int st) { if (st != bg_style) { bg_style = st; bg_ready = 0; } }
-
-u32 gfx_theme_col(int level, u32 alpha)
-{
-    if (bg_style == 1) return scale_col(ps1_pal[level & 3], 1.0f, alpha);
-    if (bg_style == 2) return scale_col(ps2_pal[level & 3], 1.0f, alpha);
-    return scale_col(themes[theme].c[level & 3], level == 3 ? 1.0f : bright, alpha);
-}
-u32 gfx_accent(u32 alpha)
-{
-    if (bg_style == 1) return 0xd8dce6ff & 0xffffff00 | alpha;
-    if (bg_style == 2) return 0x7fd4ffff & 0xffffff00 | alpha;
-    return (themes[theme].accent & 0xffffff00) | alpha;
-}
+u32 gfx_theme_col(int level, u32 alpha) { return scale_col(themes[theme].c[level & 3], level == 3 ? 1.0f : bright, alpha); }
+u32 gfx_accent(u32 alpha) { return (themes[theme].accent & 0xffffff00) | alpha; }
 
 static void bg_prepare(void)
 {
-    const u32 *pal = bg_style == 1 ? ps1_pal : bg_style == 2 ? ps2_pal : themes[theme].c;
-    u32 c0 = scale_col(pal[0], bright, 255), c1 = scale_col(pal[1], bright, 255),
-        c2 = scale_col(pal[2], bright, 255), c3 = scale_col(pal[3], bright, 255);
+    u32 c0 = scale_col(themes[theme].c[0], bright, 255), c1 = scale_col(themes[theme].c[1], bright, 255),
+        c2 = scale_col(themes[theme].c[2], bright, 255), c3 = scale_col(themes[theme].c[3], bright, 255);
     int i, j;
     for (i = 0; i <= GX; i++)
         for (j = 0; j <= GY; j++) {
@@ -472,112 +455,8 @@ static void draw_particles(float phase)
     }
 }
 
-/* ------------------------------------------------------------------ PS1 inspired
-   charcoal grey, with the four face-button shapes (triangle, circle, cross, square) in their
-   colours drifting and turning slowly - big and faint, like the PS1's own menus */
-static void quad_line(float x0, float y0, float x1, float y1, float t, u32 c)
-{
-    float dx = x1 - x0, dy = y1 - y0, l = sqrtf(dx * dx + dy * dy);
-    if (l < 0.01f) return;
-    float nx = -dy / l * t / 2, ny = dx / l * t / 2;
-    tiny3d_VertexPos(x0 + nx, y0 + ny, 1000); tiny3d_VertexColor(c);
-    tiny3d_VertexPos(x1 + nx, y1 + ny, 1000); tiny3d_VertexColor(c);
-    tiny3d_VertexPos(x1 - nx, y1 - ny, 1000); tiny3d_VertexColor(c);
-    tiny3d_VertexPos(x0 - nx, y0 - ny, 1000); tiny3d_VertexColor(c);
-}
-
-static void shape(int kind, float cx, float cy, float r, float rot, float t, u32 c)
-{
-    int i, n = kind == 0 ? 3 : kind == 1 ? 40 : 4;
-    tiny3d_SetPolygon(TINY3D_QUADS);
-    if (kind == 2) {                                        /* cross: two bars */
-        for (i = 0; i < 2; i++) {
-            float a = rot + 0.785398f + i * 1.570796f;
-            quad_line(cx - cosf(a) * r, cy - sinf(a) * r, cx + cosf(a) * r, cy + sinf(a) * r, t, c);
-        }
-    } else {                                                /* triangle, circle, square outlines */
-        float a0 = rot + (kind == 0 ? -1.570796f : kind == 3 ? 0.785398f : 0);
-        for (i = 0; i < n; i++) {
-            float a = a0 + i * 6.2831853f / n, b = a0 + (i + 1) * 6.2831853f / n;
-            quad_line(cx + cosf(a) * r, cy + sinf(a) * r, cx + cosf(b) * r, cy + sinf(b) * r, t, c);
-        }
-    }
-    tiny3d_End();
-}
-
-static void draw_ps1(float phase, int animate)
-{
-    static const u32 col[4] = { 0x40e2a0ff, 0xff6666ff, 0x7cb2e8ff, 0xf28ce6ff };   /* triangle circle cross square */
-    int i;
-    float t = animate ? phase : 0;
-    for (i = 0; i < 12; i++) {
-        int kind = i % 4;
-        float r = 70 + 150 * hash01(i, 21);
-        float x = fmodf(hash01(i, 22) * (SCREEN_W + 400) + t * (8 + 10 * hash01(i, 23)), SCREEN_W + 400) - 200;
-        float y = 120 + hash01(i, 24) * (SCREEN_H - 240) + 30 * sinf(t * 0.4f + i);
-        float rot = t * (0.05f + 0.08f * hash01(i, 25)) * (i & 1 ? 1 : -1) + i;
-        u32 c = (col[kind] & 0xffffff00) | (u32) (22 + 22 * hash01(i, 26));
-        shape(kind, x, y, r, rot, 5 + 6 * hash01(i, 27), c);
-    }
-    /* a soft light band across the bottom, like the PS1 menu floor */
-    gfx_rect_v(0, SCREEN_H - 260, SCREEN_W, 260, 0xffffff00, 0xffffff10);
-}
-
-/* ------------------------------------------------------------------ PS2 inspired
-   near-black blue space with rows of glassy "towers" of blocks rising and falling, and
-   specks of light drifting up - a nod to the PS2 start-up screen */
-static void block(float x, float y, float s, u32 front, u32 top)
-{
-    float d = s * 0.35f;                                    /* depth of the top face */
-    tiny3d_SetPolygon(TINY3D_QUADS);
-    tiny3d_VertexPos(x, y, 1000);         tiny3d_VertexColor(front);
-    tiny3d_VertexPos(x + s, y, 1000);     tiny3d_VertexColor(front);
-    tiny3d_VertexPos(x + s, y + s, 1000); tiny3d_VertexColor(front & 0xffffff00 | ((front & 0xff) / 3));
-    tiny3d_VertexPos(x, y + s, 1000);     tiny3d_VertexColor(front & 0xffffff00 | ((front & 0xff) / 3));
-    tiny3d_VertexPos(x + d, y - d, 1000);     tiny3d_VertexColor(top);
-    tiny3d_VertexPos(x + s + d, y - d, 1000); tiny3d_VertexColor(top);
-    tiny3d_VertexPos(x + s, y, 1000);         tiny3d_VertexColor(top);
-    tiny3d_VertexPos(x, y, 1000);             tiny3d_VertexColor(top);
-    tiny3d_End();
-}
-
-static void draw_ps2(float phase, int animate)
-{
-    int layer, i, k;
-    float t = animate ? phase : 0;
-    for (layer = 0; layer < 2; layer++) {                  /* far row first, then near */
-        float s = layer ? 46 : 28, base = layer ? SCREEN_H - 40 : SCREEN_H - 230;
-        int n = layer ? 16 : 24;
-        for (i = 0; i < n; i++) {
-            float x = (i + 0.5f) * SCREEN_W / n - s / 2 + (layer ? 0 : 20);
-            float h = 1 + 5 * (0.5f + 0.5f * sinf(t * (0.25f + 0.3f * hash01(i, 31 + layer)) + i * 1.7f));
-            int blocks = (int) h;
-            float frac = h - blocks;
-            for (k = 0; k <= blocks; k++) {
-                float a = (layer ? 0.9f : 0.5f) * (1.0f - (float) k / 10.0f) * (k == blocks ? frac : 1.0f);
-                if (a <= 0.02f) continue;
-                u32 front = 0x4aa8ff00 | (u32) (42 * a), top = 0xbfe8ff00 | (u32) (80 * a);
-                block(x, base - (k + 1) * s * 1.08f, s, front, top);
-            }
-        }
-    }
-    /* glow along the floor */
-    gfx_rect_v(0, SCREEN_H - 300, SCREEN_W, 300, 0x3c8cff00, 0x3c8cff26);
-    /* specks drifting up */
-    if (animate)
-        for (i = 0; i < 50; i++) {
-            float span = SCREEN_H + 40;
-            float y = SCREEN_H + 20 - fmodf(hash01(i, 41) * span + t * (10 + 20 * hash01(i, 42)), span);
-            float x = hash01(i, 43) * SCREEN_W + 20 * sinf(t * 0.5f + i);
-            int a = (int) (90 * (0.4f + 0.6f * sinf(t * 2 + i)));
-            if (a > 4) soft_circle(x, y, 2.5f + 2 * hash01(i, 44), 0xbfe8ffff, a, 8);
-        }
-}
-
 void gfx_background(float phase)
 {
-    if (bg_style == 1) { gfx_background_parts(phase, 1); draw_ps1(phase, wave_on != 0); return; }
-    if (bg_style == 2) { gfx_background_parts(phase, 1); draw_ps2(phase, wave_on != 0); return; }
     gfx_background_parts(phase, wave_on == 0 ? 1 : wave_on == 1 ? 7 : 15);
 }
 

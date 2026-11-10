@@ -33,7 +33,7 @@
 #include <sys/file.h>
 #include <strings.h>
 
-#define APP_VERSION "v0.27"
+#define APP_VERSION "v0.26"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -730,11 +730,10 @@ static void draw_info(void)
 enum { S_HEADER, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT,
        S_VIEW, S_SOUNDS, S_DIM, S_DIRECT, S_CARD, S_CLEAR_RECENT, S_CLEAR_FAVS, S_EJECT,
        S_I_SPACE, S_I_TEMP, S_I_FW, S_I_WEBMAN, S_I_GAMES, S_I_USB, S_I_VERSION,
-       S_P_EXIT, S_P_RESTART, S_P_SHUTDOWN, S_BGTHEME };
+       S_P_EXIT, S_P_RESTART, S_P_SHUTDOWN };
 static const struct { int id; const char *label; const char *help; } set_items[] = {
     { S_HEADER, "APPEARANCE", NULL },
-    { S_BGTHEME,"Background theme", "PS3: the XMB wave. PS2: glassy towers in deep blue space. PS1: grey, with the four button shapes drifting. Match: changes with the PS1 / PS2 / PS3 tab." },
-    { S_THEME,  "Background colour", "Colour of the PS3 XMB theme: the XMB blue, the PlayStation logo colours, the face-button colours and the console finishes." },
+    { S_THEME,  "Background colour", "PlayStation colours: the PS3 XMB blue, the PlayStation logo colours, the face-button colours and the console finishes." },
     { S_BRIGHT, "Background brightness", "How bright the background is." },
     { S_WAVE,   "Background animation", "Like the PS3 home screen: the moving wave, plus sparkles and soft circles floating past." },
     { S_FONT,   "Font", "The PS3's own system fonts. Fonts your firmware doesn't have are skipped." },
@@ -797,7 +796,6 @@ static const char *set_value(int id, char *buf, size_t n)
         case S_DISC:   return settings.disc_popup ? "On" : "Off";
         case S_VIEW:   return settings.view == 0 ? "Grid" : settings.view == 1 ? "List" : "Large artwork";
         case S_SOUNDS: return settings.sounds ? "On" : "Off";
-        case S_BGTHEME:return settings.bg_theme == 0 ? "PS3 XMB" : settings.bg_theme == 1 ? "PS2" : settings.bg_theme == 2 ? "PS1" : "Match the console tab";
         case S_DIM:    return settings.dim == 0 ? "Off" : settings.dim == 1 ? "After 5 minutes" : settings.dim == 2 ? "After 15 minutes" : "After 30 minutes";
         case S_I_SPACE: { const SysInfo *si = sysinfo_get();
             if (!si->have_space) return "-";
@@ -938,7 +936,6 @@ static void settings_change(int d, int pressed_x)
         case S_VIEW:   settings.view = (settings.view + d + 3) % 3; top_row[plat] = 0; break;
         case S_SOUNDS: settings.sounds = !settings.sounds; break;
         case S_DIM:    settings.dim = (settings.dim + d + 4) % 4; break;
-        case S_BGTHEME:settings.bg_theme = (settings.bg_theme + d + 4) % 4; break;
         case S_DIRECT: settings.direct_ps1 = !settings.direct_ps1; break;
         case S_CARD: {                       /* Automatic, then each card in turn */
             static char names[32][64];
@@ -1381,11 +1378,6 @@ s32 main(s32 argc, const char *argv[])
             dimmed = settings.dim && idle > limit[settings.dim];
         }
         if (exit_requested) break;
-        {   /* background theme: fixed, or following the tab (Home uses the PS3 one) */
-            static const int fixed[3] = { 0, 2, 1 };          /* setting -> gfx style */
-            int st = settings.bg_theme < 3 ? fixed[settings.bg_theme] : (tab == 1 ? 1 : tab == 2 ? 2 : 0);
-            gfx_bg_style(st);
-        }
         if (show_settings) sysinfo_poll();
         anim += 0.06f;
 
