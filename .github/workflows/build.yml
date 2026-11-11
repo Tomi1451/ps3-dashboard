@@ -27,9 +27,10 @@ jobs:
 
       - name: Install build requirements
         run: |
-          for i in 1 2 3; do sudo apt-get update && break; sleep 15; done
+          # the runner image already has most of these; if Ubuntu's mirrors are unreachable, carry on
           PKGS="gcc libelf-dev autoconf automake bison flex make cmake texinfo patch wget zlib1g-dev libtool-bin bzip2 pkg-config libssl-dev libgmp-dev"
-          for i in 1 2 3; do sudo apt-get -y --fix-missing install $PKGS && break; sleep 20; sudo apt-get update; done
+          for i in 1 2 3; do timeout 240 sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 update && break; sleep 10; done || true
+          timeout 600 sudo apt-get -y --fix-missing -o Acquire::Retries=2 -o Acquire::http::Timeout=20 install $PKGS || echo "apt install incomplete - continuing with what the image has"
 
       - name: Add toolchain to PATH
         run: echo "$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin" >> $GITHUB_PATH
