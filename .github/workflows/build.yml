@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         include:
@@ -27,9 +27,9 @@ jobs:
 
       - name: Install build requirements
         run: |
-          sudo apt-get update
-          sudo apt-get -y install gcc libelf-dev autoconf automake bison flex make cmake \
-            texinfo patch wget zlib1g-dev libtool-bin bzip2 pkg-config libssl-dev libgmp-dev
+          for i in 1 2 3; do sudo apt-get update && break; sleep 15; done
+          PKGS="gcc libelf-dev autoconf automake bison flex make cmake texinfo patch wget zlib1g-dev libtool-bin bzip2 pkg-config libssl-dev libgmp-dev"
+          for i in 1 2 3; do sudo apt-get -y --fix-missing install $PKGS && break; sleep 20; sudo apt-get update; done
 
       - name: Add toolchain to PATH
         run: echo "$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin" >> $GITHUB_PATH
