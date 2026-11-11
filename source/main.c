@@ -26,6 +26,7 @@
 #include "sound.h"
 #include "rip.h"
 #include "direct.h"
+#include "copydisc.h"
 #include <sys/systime.h>
 #include <sys/process.h>
 #include <lv2/process.h>
@@ -33,7 +34,7 @@
 #include <sys/file.h>
 #include <strings.h>
 
-#define APP_VERSION "v0.30"
+#define APP_VERSION "v0.31"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -547,6 +548,9 @@ static const char *kb_rows[] = { "ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZ0123", "4567
 static int kb_purpose = 0;          /* 0 search, 1 naming a disc image */
 static char rip_name[64] = "";
 static void rip_start(void);
+static void install_start(void);
+static int job = 1;              /* progress screen: 1 Make ISO, 2 install a PS3 disc */
+static int job_active(void);
 static const char *kb_keys[] = { "Space", "Delete", "Clear", "Done" };
 #define KB_ROWS 5
 
@@ -1009,7 +1013,7 @@ static void draw_hints(void)
         x = hint_pill(x, y, "LEFT / RIGHT", "Change");
         x = hint(x, y, 'o', "Close");
     } else if (mode == 7) {
-        if (rip_active()) x = hint(x, y, 'o', "Stop");
+        if (job_active()) x = hint(x, y, 'o', "Stop");
         else x = hint(x, y, 'x', "OK");
     } else if (mode == 4) {
         x = hint(x, y, 'x', "Type");
@@ -1122,7 +1126,7 @@ static void draw_disc_popup(void)
     }
     const char *note =
         disc_choice == 0 ? "Starts the disc from the XMB once the dashboard has closed." :
-        disc.type == DISC_PS3 ? "webMAN copies the disc to /dev_hdd0/GAMES on the XMB and tells you when it's finished. It then appears in your PS3 library." :
+        disc.type == DISC_PS3 ? "Copies the disc to /dev_hdd0/GAMES as a folder game, right here with a progress bar. It then appears in your PS3 library." :
         disc.type == DISC_PS1 ? "Copies the whole disc - video, music and CD audio tracks included - to PSXISO as a BIN + CUE, right here. You name it first." :
                                 "Copies the disc to PS2ISO as an ISO, right here. You name it first.";
     gfx_text_wrap(x + 60, y + 310, 22, 0xffffffc0, note, w - 120, 3);
@@ -1142,19 +1146,8 @@ static void disc_action(void)
         log_step("disc: play");
         ok = launch_disc();
     } else {
-        /* folder name: "<title> [<ID>]" with characters the HDD can't take removed */
-        const char *src = disc.title[0] ? disc.title : (disc.id[0] ? disc.id : "PS3 disc");
-        size_t j = 0;
-        for (; *src && j + 1 < sizeof(name); src++)
-            if (!strchr("\\/:*?\"<>|", *src)) name[j++] = *src;
-        name[j] = 0;
-        if (disc.title[0] && disc.id[0]) snprintf(target, sizeof(target), "/dev_hdd0/GAMES/%s [%s]", name, disc.id);
-        else snprintf(target, sizeof(target), "/dev_hdd0/GAMES/%s", name);
-        snprintf(line, sizeof(line), "Copying to %s on the XMB. webMAN shows the progress and tells you when it's done.", target);
-        gfx_begin(); gfx_background(anim * 0.2f); draw_message("Installing disc", line); gfx_end();
-        log_step("disc: install to %s", target);
-        ok = install_disc(target);
-        if (ok) sleep(3);   /* leave the message up long enough to read */
+        install_start();                      /* copies the disc to GAMES right here, with progress */
+        return;
     }
     if (ok) { log_step("webMAN accepted"); leave_app(); }
     log_step("webMAN not reachable");
@@ -1220,8 +1213,31 @@ static void rip_start(void)
        read it again from the real disc, so the copy can be checked against it */
     disc.virt = 0;
     disc_read_id(&disc);
+    job = 1;
     if (!rip_begin(disc.type == DISC_PS1 ? RIP_PS1 : RIP_PS2, rip_name, disc.id)) { mode = 7; return; }
     rip_t0 = now_ms();
+    mode = 7;
+}
+
+/* the progress screen serves both jobs: 1 Make ISO (rip.c), 2 install a PS3 disc (copydisc.c) */
+static int   job_active(void)   { return job == 2 ? cd_active() : rip_active(); }
+static int   job_done(void)     { return job == 2 ? cd_done() : rip_done(); }
+static float job_progress(void) { return job == 2 ? cd_progress() : rip_progress(); }
+static u64   job_bytes_done(void)  { return job == 2 ? cd_bytes_done() : rip_bytes_done(); }
+static u64   job_bytes_total(void) { return job == 2 ? cd_bytes_total() : rip_bytes_total(); }
+static const char *job_message(void) { return job == 2 ? cd_message() : rip_message(); }
+static const char *job_output(void)  { return job == 2 ? cd_output() : rip_output(); }
+static int   job_step(void)     { return job == 2 ? cd_step() : rip_step(); }
+static void  job_cancel(void)   { if (job == 2) cd_cancel(); else rip_cancel(); }
+
+static void install_start(void)
+{
+    gfx_begin(); gfx_background(anim * 0.2f); draw_message("Getting the disc ready", "Making sure nothing else is using the drive..."); gfx_end();
+    unmount_disc();                              /* a mounted game image would be copied instead */
+    sleep(2);
+    job = 2;
+    log_step("disc: install %s [%s]", disc.title, disc.id);
+    if (cd_begin(disc.title, disc.id)) rip_t0 = now_ms();
     mode = 7;
 }
 
@@ -1233,13 +1249,13 @@ static void draw_rip(void)
     gfx_rect_v(x, y, w, h, gfx_theme_col(1, 0xff), gfx_theme_col(2, 0xff));
     gfx_frame(x, y, w, h, 1, 0xffffff40);
     gfx_rect(x, y, w, 4, gfx_accent(0xff));
-    if (rip_active()) {
-        float p = rip_progress();
+    if (job_active()) {
+        float p = job_progress();
         u64 ms = now_ms() - rip_t0;
-        double done = rip_bytes_done() / 1048576.0, total = rip_bytes_total() / 1048576.0;
+        double done = job_bytes_done() / 1048576.0, total = job_bytes_total() / 1048576.0;
         double speed = ms > 500 ? done / (ms / 1000.0) : 0;
-        gfx_text(x + 50, y + 40, 20, 0xffffff8c, "MAKING ISO");
-        gfx_text_fit(x + 50, y + 74, 40, 0xffffffff, rip_message(), w - 100);
+        gfx_text(x + 50, y + 40, 20, 0xffffff8c, job == 2 ? "INSTALLING TO HDD" : "MAKING ISO");
+        gfx_text_fit(x + 50, y + 74, 40, 0xffffffff, job_message(), w - 100);
         gfx_rect(x + 50, y + 170, w - 100, 30, 0x00000070);
         gfx_rect(x + 50, y + 170, (w - 100) * p, 30, gfx_accent(0xe0));
         gfx_frame(x + 50, y + 170, w - 100, 30, 1, 0xffffff40);
@@ -1251,14 +1267,14 @@ static void draw_rip(void)
             gfx_text(x + w - 50 - gfx_text_w(22, b), y + 228, 22, 0xffffffa0, b);
         }
         gfx_text_wrap(x + 50, y + 300, 21, 0xffffff90, "Leave the disc in and don't turn the console off. Press CIRCLE to stop - the unfinished file is removed.", w - 100, 2);
-    } else if (rip_done()) {
+    } else if (job_done()) {
         gfx_text(x + 50, y + 40, 20, 0xffffff8c, "FINISHED");
-        gfx_text_fit(x + 50, y + 74, 40, 0xffffffff, rip_message(), w - 100);
-        gfx_text_wrap(x + 50, y + 150, 22, 0xffffffd0, rip_output(), w - 100, 2);
+        gfx_text_fit(x + 50, y + 74, 40, 0xffffffff, job_message(), w - 100);
+        gfx_text_wrap(x + 50, y + 150, 22, 0xffffffd0, job_output(), w - 100, 2);
         gfx_text_wrap(x + 50, y + 230, 22, 0xffffffb0, "It's now in your library. Press X to go to it. Run the PC tools again to add its cover and game info.", w - 100, 3);
     } else {
-        gfx_text(x + 50, y + 40, 20, 0xffffff8c, "COULDN'T MAKE THE ISO");
-        gfx_text_wrap(x + 50, y + 80, 26, 0xffffffff, rip_message(), w - 100, 3);
+        gfx_text(x + 50, y + 40, 20, 0xffffff8c, job == 2 ? "COULDN'T INSTALL THE DISC" : "COULDN'T MAKE THE ISO");
+        gfx_text_wrap(x + 50, y + 80, 26, 0xffffffff, job_message(), w - 100, 3);
         gfx_text_wrap(x + 50, y + 230, 21, 0xffffffa0,
                       "Nothing was left half-written on the HDD. Clean the disc and try again - the log has the details.", w - 100, 3);
     }
@@ -1268,16 +1284,16 @@ static void rescan_library(void);
 
 static void rip_input(void)
 {
-    if (rip_active()) {
-        if (pad_pressed & B_CIRCLE) { rip_cancel(); sound_play(SND_BACK); return; }
-        rip_step();
-        if (disc.type == DISC_PS2 && rip_active()) rip_step();     /* DVDs read faster */
-        if (rip_done()) sound_play(SND_STAR);
+    if (job_active()) {
+        if (pad_pressed & B_CIRCLE) { job_cancel(); sound_play(SND_BACK); return; }
+        job_step();
+        if (job == 1 && disc.type == DISC_PS2 && job_active()) job_step();     /* DVDs read faster */
+        if (job_done()) sound_play(SND_STAR);
         return;
     }
     if (pad_pressed & (B_CROSS | B_CIRCLE)) {
-        if (rip_done()) {                                         /* show the new game */
-            const char *out = rip_output();
+        if (job_done()) {                                         /* show the new game */
+            const char *out = job_output();
             rescan_library();
             int t, i;
             for (t = 0; t < PLAT_COUNT; t++)

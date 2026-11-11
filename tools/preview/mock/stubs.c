@@ -131,3 +131,8 @@ int ps1_cards(char names[][64], int max) { strcpy(names[0], "Main_Card.VM1"); st
 const char *ps1_card_in_use(void) { return settings.ps1_card[0] ? settings.ps1_card : "Main_Card.VM1"; }
 int direct_start(const Game *g, const char *p) { return 0; }
 int mount_only(const char *p) { return 1; }
+#include "../../../source/copydisc.h"
+int cd_begin(const char *t, const char *i) { return 1; } int cd_step(void) { return 1; } void cd_cancel(void) {}
+int cd_active(void) { return 1; } int cd_done(void) { return 0; } int cd_failed(void) { return 0; }
+float cd_progress(void) { return 0.42f; } u64 cd_bytes_done(void) { return 7600ULL << 20; } u64 cd_bytes_total(void) { return 18100ULL << 20; }
+const char *cd_message(void) { return "Grand Theft Auto V [BLES01807]"; } const char *cd_output(void) { return "/dev_hdd0/GAMES/Grand Theft Auto V [BLES01807]"; }
