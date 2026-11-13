@@ -34,7 +34,7 @@
 #include <sys/file.h>
 #include <strings.h>
 
-#define APP_VERSION "v0.31"
+#define APP_VERSION "v0.32"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -197,11 +197,26 @@ static const u32   plat_hue[PLAT_COUNT][2] = { { 0x545862ff, 0x1c1d22ff }, { 0x1
 static int plat = PLAT_PS1;
 static int info_scroll = 0;     /* first synopsis line shown on the Game info page */
 
+/* grid view layout: A-Z bar | cover grid | details panel */
+#define GV_TOP      232.0f
+#define GV_BOTTOM   940.0f
+#define GV_RAIL_W   44.0f
+#define GV_PANEL_W  560.0f
+#define GV_GRID_X   (MARGIN_X + GV_RAIL_W + 24)
+#define GV_PANEL_X  (SCREEN_W - MARGIN_X - GV_PANEL_W)
+#define GV_GRID_W   (GV_PANEL_X - 44 - GV_GRID_X)
+static const float gv_cover[3] = { 150.0f, 178.0f, 214.0f };
+#define GV_COVER_H  (gv_cover[settings.cover_size])
+#define GV_ROW_H    (GV_COVER_H + 62)
+#define GV_ROWS     ((int) ((GV_BOTTOM - GV_TOP + 22) / GV_ROW_H))
+
 /* as many covers per row as fit with an even gap, so narrow PS2 cases sit closer together */
 static int cols_for(int p)
 {
-    float bh = size_cover[settings.cover_size], bw = bh * plat_aspect[p], gap = bh * 0.2f;
-    int n = (int) ((SCREEN_W - 2 * MARGIN_X + gap) / (bw + gap));
+    float bh = size_cover[settings.cover_size], area = SCREEN_W - 2 * MARGIN_X;
+    if (settings.view == 0) { bh = gv_cover[settings.cover_size]; area = GV_GRID_W; }
+    float bw = bh * plat_aspect[p], gap = bh * 0.2f;
+    int n = (int) ((area + gap) / (bw + gap));
     return n < 3 ? 3 : n > 12 ? 12 : n;
 }
 static int show_settings = 0, set_row = 0, set_top = 0;   /* Settings window (SELECT) */
@@ -341,19 +356,21 @@ static void draw_heading(void)
 {
     char buf[160];
     float x;
+    int compact = (settings.view == 0);           /* grid view: heading sits higher to make room for three rows */
+    float ty = compact ? 138 : 168, ts = compact ? 44 : 52, sy = compact ? 152 : 184, ss = compact ? 26 : 34;
     if (query[0]) {
-        x = gfx_text(MARGIN_X, 168, 52, 0xffffffff, "Search");
+        x = gfx_text(MARGIN_X, ty, ts, 0xffffffff, "Search");
         snprintf(buf, sizeof(buf), "  \xB7  \"%s\" in %s  \xB7  %d found", query, plat_short(plat), vn);
-        gfx_text(x, 184, 30, 0xffffff90, buf);
+        gfx_text(x, sy, compact ? 24 : 30, 0xffffff90, buf);
     } else {
-        x = gfx_text(MARGIN_X, 168, 52, 0xffffffff, plat_name(plat));
+        x = gfx_text(MARGIN_X, ty, ts, 0xffffffff, plat_name(plat));
         snprintf(buf, sizeof(buf), "  \xB7  %d game%s", vn, vn == 1 ? "" : "s");
-        gfx_text(x, 184, 34, 0xffffff90, buf);
+        gfx_text(x, sy, ss, 0xffffff90, buf);
     }
     if (vn) {
-        char pos[48];
-        snprintf(pos, sizeof(pos), "%d / %d   \xB7   %s", sel[plat] + 1, vn, settings.sort ? "Z-A" : "A-Z");
-        gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(22, pos), 196, 22, 0xffffff80, pos);
+        char pos[64];
+        snprintf(pos, sizeof(pos), "Game %d of %d   \xB7   %s", sel[plat] + 1, vn, settings.sort ? "Z-A" : "A-Z");
+        gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(22, pos), compact ? 160 : 196, 22, 0xffffff80, pos);
     }
 }
 
@@ -373,41 +390,194 @@ static int draw_empty(void)
     return 1;
 }
 
+/* A-Z bar down the left: letters with games are bright, the current one is ringed */
+static void draw_az_rail(void)
+{
+    static const char az[] = "#ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    char have[27];
+    int i;
+    memset(have, 0, sizeof(have));
+    for (i = 0; i < vn; i++) {
+        int c = toupper((unsigned char) vlist[i]->title[0]);
+        have[(c >= 'A' && c <= 'Z') ? c - 'A' + 1 : 0] = 1;
+    }
+    int cc = toupper((unsigned char) vlist[sel[plat]]->title[0]);
+    int cur = (cc >= 'A' && cc <= 'Z') ? cc - 'A' + 1 : 0;
+    float step = (GV_BOTTOM - GV_TOP - 44) / 26.0f, cx = MARGIN_X + GV_RAIL_W / 2;
+    for (i = 0; i < 27; i++) {
+        char t[2] = { az[i], 0 };
+        float y = GV_TOP + 6 + i * step;
+        if (i == cur) {
+            circle_fill(cx, y + 9, 15, 0xffffffff);
+            gfx_text_center(cx, y, 18, gfx_theme_col(3, 0xff), t);
+        } else gfx_text_center(cx, y, 17, have[i] ? 0xffffffc8 : 0xffffff40, t);
+    }
+}
+
+/* pill-shaped button in the details panel */
+static float panel_button(float x, float y, float w, char glyph, const char *label, int primary)
+{
+    const float h = 56;
+    float tw = gfx_text_w(21, label), gx;
+    if (w <= 0) w = tw + 92;
+    u32 col = primary ? 0xffffffff : 0xffffff1c;
+    int i, side;
+    gfx_rect(x + h / 2, y, w - h, h, col);
+    for (side = -1; side <= 1; side += 2) {            /* round ends as half discs, so see-through colours don't double up */
+        float cx = side < 0 ? x + h / 2 : x + w - h / 2, cy = y + h / 2, r = h / 2;
+        tiny3d_SetPolygon(TINY3D_QUADS);
+        for (i = 0; i < 12; i++) {
+            float a0 = 1.5707963f + i * 3.1415926f / 12, a1 = a0 + 3.1415926f / 12;
+            if (side > 0) { a0 -= 3.1415926f; a1 -= 3.1415926f; }
+            tiny3d_VertexPos(cx, cy, 1000);                               tiny3d_VertexColor(col);
+            tiny3d_VertexPos(cx + r * cosf(a0), cy + r * sinf(a0), 1000); tiny3d_VertexColor(col);
+            tiny3d_VertexPos(cx + r * cosf(a1), cy + r * sinf(a1), 1000); tiny3d_VertexColor(col);
+            tiny3d_VertexPos(cx, cy, 1000);                               tiny3d_VertexColor(col);
+        }
+        tiny3d_End();
+    }
+    gx = x + (w - (tw + 46)) / 2;
+    button_glyph(glyph, gx + 17, y + h / 2);
+    gfx_text(gx + 46, y + 15, 21, primary ? gfx_theme_col(3, 0xff) : 0xffffffff, label);
+    return x + w + 12;
+}
+
+static void panel_row(float x, float y, const char *label, const char *value)
+{
+    gfx_text(x, y, 18, 0xffffff96, label);
+    gfx_text_fit(x + 150, y, 18, 0xffffffe6, value, GV_PANEL_W - 64 - 150);
+}
+
+/* details of the selected game, on the right of the grid */
+static void draw_game_panel(const Game *g)
+{
+    static const Game *shown = NULL;
+    static int settle = 0;
+    char buf[200];
+    float x = GV_PANEL_X, y = GV_TOP - 8, w = GV_PANEL_W, h = GV_BOTTOM - y + 4;
+    float px = x + 32, pw = w - 64;
+
+    /* only read the info file once the selection stops moving, so scrolling stays smooth */
+    if (g != shown) { shown = g; settle = 0; }
+    if (settle < 12) settle++;
+    const GameInfo *gi = settle >= 12 ? info_get(g) : NULL;
+    if (gi && !gi->found) gi = NULL;
+
+    gfx_rect(x, y, w, h, gfx_theme_col(3, 0xb8));
+    gfx_frame(x, y, w, h, 1, 0xffffff24);
+
+    /* cover */
+    float boxh = 220, cw = boxh * plat_aspect[g->plat], ch = boxh;
+    const Texture *t = covers_get(g);
+    if (t) { float sc = fminf(200.0f / t->w, boxh / t->h); cw = t->w * sc; ch = t->h * sc; }
+    else if (cw > 200) { cw = 200; ch = 200 / plat_aspect[g->plat]; }
+    gfx_rect(px + 8, y + 32 + 12, cw, ch, 0x00000080);
+    if (t) gfx_image(t, px, y + 32, cw, ch, 0xffffffff);
+    else   draw_placeholder(g, px, y + 32, cw, ch);
+    gfx_frame(px, y + 32, cw, ch, 1, 0xffffff40);
+
+    /* title, year and genre, chips */
+    float tx = px + cw + 26, tw = px + pw - tx, ty = y + 34;
+    ty = gfx_text_wrap(tx, ty, 32, 0xffffffff, g->title, tw, 3) + 4;
+    if (gi && (gi->release[0] || gi->genre[0])) {
+        char yr[8] = "";
+        if (gi->release[0]) { strncpy(yr, gi->release, 4); yr[4] = 0; }
+        snprintf(buf, sizeof(buf), "%s%s%s", yr, yr[0] && gi->genre[0] ? "  \xB7  " : "", gi->genre);
+        gfx_text_fit(tx, ty, 19, 0xffffffb4, buf, tw);
+        ty += 36;
+    }
+    {
+        const char *chips[4]; char discs[16]; int n = 0, i;
+        const char *id = g->id[0] ? g->id : (gi ? gi->id : "");
+        if (g->region[0]) chips[n++] = g->region;
+        if (id[0]) chips[n++] = id;
+        if (g->ndiscs) { snprintf(discs, sizeof(discs), "%d discs", g->ndiscs); chips[n++] = discs; }
+        chips[n++] = format_name(g->format);
+        float cx = tx, cy = ty;
+        for (i = 0; i < n; i++) {
+            float cwid = gfx_text_w(15, chips[i]) + 20;
+            if (cx + cwid > px + pw) { cx = tx; cy += 36; }
+            if (cy > y + 32 + ch - 28) break;
+            gfx_rect(cx, cy, cwid, 30, 0xffffff1c);
+            gfx_text(cx + 10, cy + 6, 15, 0xffffffe6, chips[i]);
+            cx += cwid + 8;
+        }
+    }
+
+    /* synopsis */
+    float sy = y + 32 + fmaxf(ch, 200) + 28;
+    if (gi && gi->synopsis[0]) sy = gfx_text_wrap(px, sy, 19, 0xffffffcc, gi->synopsis, pw, 5);
+    else if (settle >= 12) sy = gfx_text_wrap(px, sy, 19, 0xffffff80, "No game info yet. Run GET_GAME_INFO.bat from the PC tool to add a synopsis, developer and release date.", pw, 3);
+    else sy += 19 * 1.18f * 3;
+
+    /* facts */
+    float fy = sy + 22;
+    gfx_rect(px, fy - 12, pw, 1, 0xffffff24);
+    panel_row(px, fy + 4, "Developer", gi && gi->developer[0] ? gi->developer : "-");
+    panel_row(px, fy + 40, "Publisher", gi && gi->publisher[0] ? gi->publisher : "-");
+    snprintf(buf, sizeof(buf), "%s", g->where[0] ? (strcmp(g->where, "HDD") ? g->where : "Internal HDD") : "Internal HDD");
+    panel_row(px, fy + 76, "Stored on", buf);
+    if (g->plat == PLAT_PS1 && settings.direct_ps1)
+        panel_row(px, fy + 112, "Memory card", ps1_card_in_use());
+    else if (gi && gi->players[0])
+        panel_row(px, fy + 112, "Players", gi->players);
+
+    /* buttons */
+    float by = y + h - 32 - 56, bx = px;
+    bx = panel_button(bx, by, pw - 12 - 150 - 12 - 186, 'x', "Play", 1);
+    bx = panel_button(bx, by, 150, 't', "Info", 0);
+    panel_button(bx, by, 186, 's', g->fav ? "Unstar" : "Favourite", 0);
+}
+
 static void draw_grid(void)
 {
     int i;
     draw_heading();
     if (draw_empty()) return;
 
+    int cols = COLS, rows = GV_ROWS;
+    if (rows < 1) rows = 1;
     /* keep the selected row visible */
-    int srow = sel[plat] / COLS;
+    int srow = sel[plat] / cols;
     if (srow < top_row[plat]) top_row[plat] = srow;
-    if (srow > top_row[plat] + 1) top_row[plat] = srow - 1;
+    if (srow > top_row[plat] + rows - 1) top_row[plat] = srow - rows + 1;
 
     const Game *cur = vlist[sel[plat]];
-    float bh = COVER_H, bw = COVER_H * plat_aspect[plat];
-    int first = top_row[plat] * COLS, last = first + COLS * VIS_ROWS;
+    float bh = GV_COVER_H, bw = bh * plat_aspect[plat];
+    float cell = GV_GRID_W / cols;
+    int first = top_row[plat] * cols, last = first + cols * rows;
     if (last > vn) last = vn;
 
+    draw_az_rail();
     for (i = first; i < last; i++) {
-        int r = i / COLS - top_row[plat], c = i % COLS;
-        float cx = MARGIN_X + c * CELL_W + (CELL_W - bw) / 2;
-        float cy = GRID_Y + r * ROW_H;
-        if (cy + bh > FOOTER_Y - 10) break;          /* only whole rows above the button bar */
+        int r = i / cols - top_row[plat], c = i % cols;
+        float cx = GV_GRID_X + c * cell + (cell - bw) / 2;
+        float cy = GV_TOP + r * GV_ROW_H;
         if (i == sel[plat]) continue;               /* selected drawn last, on top */
         draw_cover(vlist[i], cx, cy, bw, bh, 0);
         draw_badges(vlist[i], cx, cy, bw);
-        if (settings.titles) gfx_text_fit(cx, cy + bh + 16, 19, 0xffffffb0, vlist[i]->title, CELL_W - 30);
+        if (settings.titles) gfx_text_fit(cx, cy + bh + 14, 18, 0xffffffb0, vlist[i]->title, cell - 16);
     }
     {
-        int r = sel[plat] / COLS - top_row[plat], c = sel[plat] % COLS;
-        float cx = MARGIN_X + c * CELL_W + (CELL_W - bw) / 2, cy = GRID_Y + r * ROW_H;
+        int r = sel[plat] / cols - top_row[plat], c = sel[plat] % cols;
+        float cx = GV_GRID_X + c * cell + (cell - bw) / 2, cy = GV_TOP + r * GV_ROW_H;
         draw_cover(cur, cx, cy, bw, bh, 1);
         draw_badges(cur, cx, cy - bh * 0.06f, bw);
-        gfx_text_fit(cx, cy + bh + 16, 21, 0xffffffff, cur->title, CELL_W - 30);   /* the selected game always shows its name */
+        gfx_text_fit(cx, cy + bh + 14, 19, 0xffffffff, cur->title, cell - 16);
     }
+
+    /* scroll bar between the grid and the panel */
+    int total_rows = (vn + cols - 1) / cols;
+    if (total_rows > rows) {
+        float sx = GV_PANEL_X - 24, sh = GV_BOTTOM - GV_TOP;
+        float th = sh * rows / total_rows, ty = GV_TOP + (sh - th) * top_row[plat] / (total_rows - rows);
+        gfx_rect(sx, GV_TOP, 4, sh, 0xffffff1a);
+        gfx_rect(sx, ty, 4, th, 0xffffff90);
+    }
+
+    draw_game_panel(cur);
     /* preload the next row so scrolling shows covers straight away */
-    for (i = last; i < last + COLS && i < vn; i++) covers_get(vlist[i]);
+    for (i = last; i < last + cols && i < vn; i++) covers_get(vlist[i]);
 }
 
 /* list view: one game per row */
