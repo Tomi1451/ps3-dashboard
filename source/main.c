@@ -33,8 +33,9 @@
 #include <lv2/sysfs.h>
 #include <sys/file.h>
 #include <strings.h>
+#include <sysutil/sysutil.h>
 
-#define APP_VERSION "v0.32"
+#define APP_VERSION "v0.33"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -318,18 +319,48 @@ static void draw_cover(const Game *g, float bx, float by, float bw, float bh, in
     else          gfx_frame(x, y, w, h, 1, 0xffffff26);
 }
 
+/* ---------------------------------------------------------------- tab icons */
+static void icon_house(float cx, float cy, float k, u32 c)
+{
+    float t = 2.6f * k;
+    thick_line(cx - 17 * k, cy - 1 * k, cx, cy - 16 * k, t, c);          /* roof */
+    thick_line(cx, cy - 16 * k, cx + 17 * k, cy - 1 * k, t, c);
+    thick_line(cx - 12 * k, cy - 5 * k, cx - 12 * k, cy + 15 * k, t, c);  /* walls */
+    thick_line(cx + 12 * k, cy - 5 * k, cx + 12 * k, cy + 15 * k, t, c);
+    thick_line(cx - 12 * k, cy + 15 * k, cx + 12 * k, cy + 15 * k, t, c);
+    gfx_rect(cx - 4 * k, cy + 4 * k, 8 * k, 11 * k, c);                   /* door */
+}
+
+/* a game disc in that console's colours: PS1 black, PS2 blue, PS3 silver */
+static void icon_disc(float cx, float cy, float k, int p, u32 alpha)
+{
+    static const u32 face[3] = { 0x23252cff, 0x2b56d6ff, 0xc9d0dbff };
+    static const u32 shine[3] = { 0x8a90a0ff, 0x9fc0ffff, 0xffffffff };
+    float r = 19 * k;
+    u32 a = alpha & 0xff;
+    circle_fill(cx, cy, r, (face[p] & 0xffffff00) | a);
+    ring(cx, cy, r, (0xffffff00) | (a * 0x90 / 0xff));
+    ring(cx, cy, r * 0.62f, (shine[p] & 0xffffff00) | (a * 0x50 / 0xff));   /* data ring */
+    thick_line(cx - r * 0.55f, cy - r * 0.55f, cx - r * 0.2f, cy - r * 0.78f, 2.0f * k, (shine[p] & 0xffffff00) | (a * 0xb0 / 0xff));
+    circle_fill(cx, cy, 6.5f * k, (0xd8dce4ff & 0xffffff00) | a);           /* clear hub */
+    circle_fill(cx, cy, 3.0f * k, 0x0000006c);
+}
+
 static void draw_nav(void)
 {
     static const char *labels[4] = { "Home", "PS1", "PS2", "PS3" };
-    float x = MARGIN_X;
+    float x = MARGIN_X - 8;
     int t, total = 0;
     for (t = 0; t < 4; t++) {
         int on = (t == tab);
-        float size = on ? 46 : 32;
-        float w = gfx_text_w(size, labels[t]);
-        gfx_text(x, on ? 52 : 64, size, on ? 0xffffffff : 0xffffff90, labels[t]);
-        if (on) gfx_rect(x, 112, w, 4, gfx_accent(0xff));
-        x += w + 56;
+        float k = on ? 1.25f : 1.0f, cx = x + 56, cy = 58;
+        u32 col = on ? 0xffffffff : 0xffffffa0;
+        if (on) circle_fill(cx, cy, 34, gfx_accent(0x26));          /* soft glow behind the active icon */
+        if (t == 0) icon_house(cx, cy, k, col);
+        else icon_disc(cx, cy, k, t - 1, on ? 0xff : 0xa8);
+        gfx_text_center(cx, 92, on ? 24 : 21, col, labels[t]);
+        if (on) gfx_rect(cx - 22, 124, 44, 3, gfx_accent(0xff));
+        x += 124;
     }
     for (t = 0; t < PLAT_COUNT; t++) total += library[t].count;
     char buf[160];
@@ -907,7 +938,7 @@ enum { S_HEADER, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_
        S_P_EXIT, S_P_RESTART, S_P_SHUTDOWN };
 static const struct { int id; const char *label; const char *help; } set_items[] = {
     { S_HEADER, "APPEARANCE", NULL },
-    { S_THEME,  "Background colour", "PlayStation colours: the PS3 XMB blue, the PlayStation logo colours, the face-button colours and the console finishes." },
+    { S_THEME,  "Background colour", "The PS3's own XMB colours. Original changes with the date like the real XMB and gets darker at night; or pick one month's colour to keep." },
     { S_BRIGHT, "Background brightness", "How bright the background is." },
     { S_WAVE,   "Background animation", "Like the PS3 home screen: the moving wave, plus sparkles and soft circles floating past." },
     { S_FONT,   "Font", "The PS3's own system fonts. Fonts your firmware doesn't have are skipped." },
@@ -1357,6 +1388,25 @@ static void rescan_library(void)
 
 /* ---------------------------------------------------------------- Make ISO */
 static u64 rip_t0 = 0;
+/* local date and time for the "Original" background colour (UTC + the console's time zone) */
+static void update_clock(void)
+{
+    u64 sec = 0, ns = 0;
+    s32 tz = 0, dst = 0;
+    sysGetCurrentTime(&sec, &ns);
+    if (sysUtilGetSystemParamInt(0x0116, &tz) != 0) tz = 0;          /* time zone, minutes from UTC */
+    if (sysUtilGetSystemParamInt(0x0117, &dst) != 0) dst = 0;        /* summer time on/off */
+    s64 t = (s64) sec + (s64) tz * 60 + (dst ? 3600 : 0);
+    s64 days = t / 86400, rem = t % 86400;
+    if (rem < 0) { rem += 86400; days--; }
+    /* days since 1970-01-01 -> year, month, day (Howard Hinnant's civil_from_days) */
+    s64 z = days + 719468, era = (z >= 0 ? z : z - 146096) / 146097;
+    s64 doe = z - era * 146097, yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    s64 doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+    int d = (int) (doy - (153 * mp + 2) / 5 + 1), m = (int) (mp < 10 ? mp + 3 : mp - 9);
+    gfx_theme_clock(m, d, (int) (rem / 3600), (int) ((rem % 3600) / 60));
+}
+
 static u64 now_ms(void) { u64 sec = 0, ns = 0; sysGetCurrentTime(&sec, &ns); return sec * 1000 + ns / 1000000; }
 
 static void rip_start(void)
@@ -1566,6 +1616,7 @@ s32 main(s32 argc, const char *argv[])
         if (exit_requested) break;
         if (show_settings) sysinfo_poll();
         anim += 0.06f;
+        if (frames == 1 || frames % 1800 == 0) update_clock();
 
         if (mode != 3 && mode != 4 && mode != 5 && mode != 7 && !show_settings && disc_poll(&disc) && settings.disc_popup) {
             prev_mode = (mode == 2) ? 0 : mode; mode = 3; disc_choice = 0; sound_play(SND_TAB);

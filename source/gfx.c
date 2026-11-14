@@ -250,33 +250,32 @@ static u32 lerp_col(u32 a, u32 b, float t)
 }
 
 /* ------------------------------------------------------------------ themes
-   PlayStation colour palette: the PS3 XMB blue, the four colours of the PlayStation logo,
-   the four face-button colours, and the console finishes. Each is a base colour; the
-   background is a radial gradient from it (bright centre, deep edges). */
-typedef struct { const char *name; u32 c[4]; u32 accent; } Theme;
-#define T4(r, g, b) { RGBA(r, g, b, 255), RGBA((r) * 0.48f, (g) * 0.48f, (b) * 0.48f, 255), \
-                      RGBA((r) * 0.22f, (g) * 0.22f, (b) * 0.22f, 255), RGBA((r) * 0.08f, (g) * 0.08f, (b) * 0.08f, 255) }
+   The PS3's own XMB colours (Settings > Theme Settings > Colour): "Original" follows the
+   date like the real XMB (each month's colour, drifting into the next through the month,
+   darker at night), or pin one of the twelve month colours. Colour values are the month
+   filters listed on the PS3 Developer wiki. */
+typedef struct { const char *name; u32 base; } Theme;
 static const Theme themes[] = {
-    { "PS3 Classic Blue",      { 0x2563d9ff, 0x0d3591ff, 0x061a52ff, 0x020a22ff }, 0x9cc8ffff },
-    { "PlayStation Blue",      T4(0x10, 0x4c, 0xb8), 0x8fb6ffff },
-    { "PlayStation Red",       T4(0xc4, 0x14, 0x2a), 0xff9aa6ff },
-    { "PlayStation Yellow",    T4(0xc8, 0x8c, 0x00), 0xffd970ff },
-    { "PlayStation Green",     T4(0x00, 0x96, 0x58), 0x86f0c0ff },
-    { "Triangle Teal",         T4(0x22, 0xa8, 0x92), 0x9ef3e2ff },
-    { "Circle Red",            T4(0xd0, 0x3c, 0x4c), 0xffa8b2ff },
-    { "Cross Blue",            T4(0x4a, 0x7c, 0xd4), 0xb4d0ffff },
-    { "Square Pink",           T4(0xb4, 0x4c, 0xb0), 0xffb4f8ff },
-    { "PS1 Grey",              T4(0x86, 0x88, 0x92), 0xe0e2ecff },
-    { "PS2 Midnight",          T4(0x22, 0x2c, 0x6a), 0xa8b4ffff },
-    { "PS3 Piano Black",       T4(0x3a, 0x3a, 0x40), 0xd0d0d8ff },
+    { "Original (changes with the date)", 0 },
+    { "January \xB7 Silver",    0xcbcbcbff },
+    { "February \xB7 Gold",     0xd8bf1aff },
+    { "March \xB7 Lime",        0x6db217ff },
+    { "April \xB7 Pink",        0xe17e9aff },
+    { "May \xB7 Green",         0x178816ff },
+    { "June \xB7 Lavender",     0x9a61c8ff },
+    { "July \xB7 Cyan",         0x02cdc7ff },
+    { "August \xB7 Blue",       0x0c76c0ff },
+    { "September \xB7 Purple",  0xb444c0ff },
+    { "October \xB7 Orange",    0xe5a708ff },
+    { "November \xB7 Brown",    0x875b1eff },
+    { "December \xB7 Red",      0xe3412aff },
 };
 #define THEME_COUNT ((int) (sizeof(themes) / sizeof(themes[0])))
 static int theme = 0, wave_on = 1;
 static float bright = 1.0f;
-
-int         gfx_theme_count(void) { return THEME_COUNT; }
-const char *gfx_theme_name(int i) { return themes[i].name; }
-u32         gfx_theme_swatch(int i) { return themes[i].c[0]; }
+static u32 cur_base = 0x0c76c0ff;              /* colour in use (for Original it follows the clock) */
+static float night = 1.0f;                     /* Original only: 1 by day, lower at night */
+static int clk_month = 11, clk_day = 1, clk_hour = 12, clk_min = 0;
 
 static u32 scale_col(u32 c, float k, u32 a)
 {
@@ -284,23 +283,63 @@ static u32 scale_col(u32 c, float k, u32 a)
     return RGBA(r > 255 ? 255 : r, g > 255 ? 255 : g, b > 255 ? 255 : b, a);
 }
 
+static void theme_refresh(void)
+{
+    if (theme == 0) {
+        static const int mdays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+        int m = (clk_month >= 1 && clk_month <= 12) ? clk_month : 11;
+        float t = (float) (clk_day - 1) / mdays[m - 1];          /* drifts into next month's colour */
+        cur_base = lerp_col(themes[m].base, themes[m % 12 + 1].base, t * t);
+        /* brightest at 10:00, darkest at 02:00 */
+        float h = clk_hour + clk_min / 60.0f;
+        float k;
+        if (h >= 2.0f && h <= 10.0f) k = -cosf((h - 2.0f) / 8.0f * 3.1415926f);
+        else { float hh = h < 2.0f ? h + 24.0f : h; k = cosf((hh - 10.0f) / 16.0f * 3.1415926f); }
+        night = 0.55f + 0.45f * (k * 0.5f + 0.5f);
+    } else {
+        cur_base = themes[theme].base;
+        night = 1.0f;
+    }
+}
+
+/* level 0 = gradient centre ... 3 = darkest edge */
+static u32 level_col(int level)
+{
+    static const float k[4] = { 0.78f, 0.40f, 0.17f, 0.055f };
+    return scale_col(cur_base, k[level & 3] * (level == 3 ? 1.0f : bright) * night, 255);
+}
+
+int         gfx_theme_count(void) { return THEME_COUNT; }
+const char *gfx_theme_name(int i) { return themes[i].name; }
+u32         gfx_theme_swatch(int i) { if (i == 0) return scale_col(cur_base, 1.0f, 255); return themes[i].base; }
+
 void gfx_theme_set(int t, int brightness, int wave)
 {
     static const float steps[5] = { 0.55f, 0.75f, 1.0f, 1.18f, 1.35f };
     theme = (t >= 0 && t < THEME_COUNT) ? t : 0;
     bright = steps[(brightness >= 0 && brightness < 5) ? brightness : 2];
     wave_on = wave;
+    theme_refresh();
     bg_ready = 0;
 }
 
-/* level 0 = gradient centre ... 3 = darkest edge; used for panels and the footer */
-u32 gfx_theme_col(int level, u32 alpha) { return scale_col(themes[theme].c[level & 3], level == 3 ? 1.0f : bright, alpha); }
-u32 gfx_accent(u32 alpha) { return (themes[theme].accent & 0xffffff00) | alpha; }
+void gfx_theme_clock(int month, int day, int hour, int minute)
+{
+    if (month == clk_month && day == clk_day && hour == clk_hour && minute == clk_min) return;
+    clk_month = month; clk_day = day; clk_hour = hour; clk_min = minute;
+    if (theme == 0) { theme_refresh(); bg_ready = 0; }
+}
+
+u32 gfx_theme_col(int level, u32 alpha) { return (level_col(level) & 0xffffff00) | alpha; }
+u32 gfx_accent(u32 alpha)
+{
+    u32 c = lerp_col(cur_base, 0xffffffff, 0.55f);
+    return (c & 0xffffff00) | alpha;
+}
 
 static void bg_prepare(void)
 {
-    u32 c0 = scale_col(themes[theme].c[0], bright, 255), c1 = scale_col(themes[theme].c[1], bright, 255),
-        c2 = scale_col(themes[theme].c[2], bright, 255), c3 = scale_col(themes[theme].c[3], bright, 255);
+    u32 c0 = level_col(0), c1 = level_col(1), c2 = level_col(2), c3 = level_col(3);
     int i, j;
     for (i = 0; i <= GX; i++)
         for (j = 0; j <= GY; j++) {
