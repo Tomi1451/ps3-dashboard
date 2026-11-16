@@ -143,9 +143,9 @@ int cd_begin(const char *title, const char *id)
     snprintf(C.dst, sizeof(C.dst), "/dev_hdd0/GAMES/%s", C.name);
     snprintf(C.msg, sizeof(C.msg), "%s", C.name);
 
-    r = bd_decrypt("/dev_bdvd");
-    log_step("copy: Blu-ray decrypt = %d", r);
-    if (sysLv2FsStat("/dev_bdvd/PS3_GAME/PARAM.SFO", &st) != 0) return fail("No PS3 game disc found in the drive", 0);
+    r = bd_decrypt("/dev_bdvd");               /* old firmwares need this; Cobra / HEN read /dev_bdvd decrypted anyway */
+    log_step("copy: Blu-ray decrypt syscall = %08X%s", (u32) r, r ? " (not needed on this firmware)" : "");
+    if (sysLv2FsStat("/dev_bdvd/PS3_GAME/PARAM.SFO", &st) != 0) return fail("The disc's files can't be read right now. Eject the disc, put it back in, wait for it to show on the XMB, then try again.", 0);
 
     C.files = calloc(MAX_FILES, sizeof(Entry));
     C.dirs = calloc(MAX_FILES, sizeof(char *));

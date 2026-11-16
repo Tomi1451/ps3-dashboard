@@ -35,7 +35,7 @@
 #include <strings.h>
 #include <sysutil/sysutil.h>
 
-#define APP_VERSION "v0.38"
+#define APP_VERSION "v0.39"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -1544,9 +1544,21 @@ static void  job_cancel(void)   { if (job == 2) cd_cancel(); else rip_cancel(); 
 
 static void install_start(void)
 {
+    sysFSStat st;
+    int waited = 0;
     gfx_begin(); gfx_background(anim * 0.2f); draw_message("Getting the disc ready", "Making sure nothing else is using the drive..."); gfx_end();
-    unmount_disc();                              /* a mounted game image would be copied instead */
-    sleep(2);
+    /* only unmount when a game image really is mounted: unmounting with just the disc in
+       makes the system drop /dev_bdvd for a while, and the copy then finds nothing */
+    if (disc_image_mounted() == 1) { log_step("disc: an image is mounted - unmounting it first"); unmount_disc(); sleep(2); }
+    /* wait (up to 20 s) for the disc's files to be readable */
+    while (sysLv2FsStat("/dev_bdvd/PS3_GAME/PARAM.SFO", &st) != 0 && waited < 40) {
+        char line[120];
+        snprintf(line, sizeof(line), "Waiting for the drive to read the disc... %d", 20 - waited / 2);
+        gfx_begin(); gfx_background(anim * 0.2f); draw_message("Getting the disc ready", line); gfx_end();
+        usleep(500000);
+        waited++;
+    }
+    log_step("disc: /dev_bdvd %s after %d ms", waited < 40 ? "ready" : "still not readable", waited * 500);
     job = 2;
     log_step("disc: install %s [%s]", disc.title, disc.id);
     if (cd_begin(disc.title, disc.id)) rip_t0 = now_ms();
