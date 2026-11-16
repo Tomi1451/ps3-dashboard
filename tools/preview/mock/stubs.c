@@ -129,7 +129,21 @@ void disc_read_id(DiscInfo *d) {}
 #include "../../../source/direct.h"
 int ps1_cards(char names[][64], int max) { strcpy(names[0], "Main_Card.VM1"); strcpy(names[1], "Second.VM1"); return 2; }
 const char *ps1_card_in_use(void) { return settings.ps1_card[0] ? settings.ps1_card : "Main_Card.VM1"; }
-int direct_start(const Game *g, const char *p) { return 0; }
+int direct_start(const Game *g, const char *p, char *w, int n) { w[0] = 0; return 0; }
+int direct_start_ps3_disc(const char *id, char *w, int n) { w[0] = 0; return 0; }
+#include "../../../source/cobra.h"
+int cobra_present(void) { return 1; }
+int cobra_is_hen(void) { return 0; }
+const char *cobra_describe(void) { return "Cobra 8.4 (CFW)"; }
+int game_mount(const Game *g, const char *p, char *w, int n) { return 1; }
+int game_unmount(void) { return 1; }
+void disc_eject(void) {}
+void power_restart(void) {}
+void power_off(void) {}
+#include "../../../source/ftp.h"
+void ftp_start(void) {}
+int ftp_status(void) { return FTP_RUNNING; }
+const char *ftp_ip(void) { return "192.168.1.20"; }
 int mount_only(const char *p) { return 1; }
 #include "../../../source/copydisc.h"
 int cd_begin(const char *t, const char *i) { return 1; } int cd_step(void) { return 1; } void cd_cancel(void) {}

@@ -1,4 +1,4 @@
-/* direct.c - PS1 games: webMAN mounts the image while we are still running, then we hand
+/* direct.c - PS1 games: our own loader (cobra.c) mounts the image, then we hand
    over to the PS3's own PS1 emulator (/dev_flash/ps1emu/ps1_netemu.self) the way IRISMAN
    does, with the same arguments. Saves go to one of your existing PS1 memory cards in
    /dev_hdd0/savedata/vmc (the most recently used one unless chosen in Settings).
@@ -15,7 +15,7 @@
 #include <lv2/process.h>
 
 #include "direct.h"
-#include "launch.h"
+#include "cobra.h"
 #include "disc.h"
 #include "settings.h"
 #include "sound.h"
@@ -54,19 +54,19 @@ const char *ps1_card_in_use(void)
     return best;
 }
 
-static int start_ps1(const char *path)
+static int start_ps1(const Game *g, const char *path, char *why, int wn)
 {
     static char a_mc1[64], a_mc2[64];
     const char *args[9];
     const char *card = ps1_card_in_use();
     int m;
 
-    if (!exists("/dev_flash/ps1emu/ps1_netemu.self")) { log_step("direct: no ps1_netemu on this firmware"); return 0; }
+    if (!exists("/dev_flash/ps1emu/ps1_netemu.self")) { log_step("direct: no ps1_netemu on this firmware"); snprintf(why, wn, "This firmware has no PS1 emulator for starting games directly."); return 0; }
     log_step("direct: mounting %s", path);
-    if (!mount_only(path)) return 0;
+    if (!game_mount(g, path, why, wn)) return 0;
     m = disc_image_mounted();
     log_step("direct: image mounted = %d", m);
-    if (m != 1) return 0;
+    if (m != 1) { snprintf(why, wn, "The PS1 image didn't mount."); return 0; }
 
     snprintf(a_mc1, sizeof(a_mc1), "%s", card[0] ? card : "No Memory Card");
     snprintf(a_mc2, sizeof(a_mc2), "No Memory Card");
@@ -83,34 +83,51 @@ static int start_ps1(const char *path)
     sound_shutdown();
     sysProcessExitSpawn2("/dev_flash/ps1emu/ps1_netemu.self", args, NULL, NULL, 0, 1001, SYS_PROCESS_SPAWN_STACK_SIZE_1M);
     log_step("direct: ps1_netemu did not start");
+    snprintf(why, wn, "The PS1 emulator didn't start.");
     return 0;
 }
 
-static int start_ps3(const Game *g, const char *path)
+/* start what's in /dev_bdvd (the game's update EBOOT if it has one) */
+static int spawn_ps3(const char *id, char *why, int wn)
 {
     char eboot[200];
-    int m;
-    log_step("direct: mounting %s", path);
-    if (!mount_only(path)) return 0;
-    m = disc_image_mounted();
-    log_step("direct: image mounted = %d", m);
     eboot[0] = 0;
-    if (g->id[0]) {                                 /* an installed update has the newer EBOOT */
-        snprintf(eboot, sizeof(eboot), "/dev_hdd0/game/%s/USRDIR/EBOOT.BIN", g->id);
+    if (id && id[0]) {                              /* an installed update has the newer EBOOT */
+        snprintf(eboot, sizeof(eboot), "/dev_hdd0/game/%s/USRDIR/EBOOT.BIN", id);
         if (!exists(eboot)) eboot[0] = 0;
     }
     if (!eboot[0]) strcpy(eboot, "/dev_bdvd/PS3_GAME/USRDIR/EBOOT.BIN");
-    if (!exists(eboot)) { log_step("direct: %s not found", eboot); return 0; }
+    if (!exists(eboot)) { log_step("direct: %s not found", eboot); snprintf(why, wn, "The game's EBOOT.BIN wasn't found."); return 0; }
     log_step("direct: starting %s", eboot);
     sound_shutdown();
     sysProcessExitSpawn2(eboot, NULL, NULL, NULL, 0, 1001, SYS_PROCESS_SPAWN_STACK_SIZE_1M);
     log_step("direct: EBOOT did not start");
+    snprintf(why, wn, "The game didn't start.");
     return 0;
 }
 
-int direct_start(const Game *g, const char *path)
+static int start_ps3(const Game *g, const char *path, char *why, int wn)
 {
-    if (g->plat == PLAT_PS1 && settings.direct_ps1) return start_ps1(path);
-    if (g->plat == PLAT_PS3 && settings.direct_ps1) return start_ps3(g, path);
+    log_step("direct: mounting %s", path);
+    if (!game_mount(g, path, why, wn)) return 0;
+    return spawn_ps3(g->id, why, wn);
+}
+
+/* a PS3 game disc in the drive */
+int direct_start_ps3_disc(const char *id, char *why, int wn)
+{
+    sysFSStat st;
+    int i;
+    game_unmount();
+    for (i = 0; i < 50 && sysLv2FsStat("/dev_bdvd/PS3_GAME/USRDIR/EBOOT.BIN", &st) != 0; i++) usleep(100000);
+    return spawn_ps3(id, why, wn);
+}
+
+int direct_start(const Game *g, const char *path, char *why, int wn)
+{
+    why[0] = 0;
+    if (g->plat == PLAT_PS1) return start_ps1(g, path, why, wn);
+    if (g->plat == PLAT_PS3) return start_ps3(g, path, why, wn);
+    snprintf(why, wn, "PS2 games start from the XMB.");
     return 0;
 }

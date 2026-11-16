@@ -1,6 +1,6 @@
 /*
  * PS Dashboard - a PlayStation library for the PS3
- * Stage 1: PS1 / PS2 / PS3 cover grids, game info panel, launching through webMAN MOD.
+ * PS1 / PS2 / PS3 libraries, game info, its own game loader (through Cobra) and FTP server.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +27,8 @@
 #include "rip.h"
 #include "direct.h"
 #include "copydisc.h"
+#include "cobra.h"
+#include "ftp.h"
 #include <sys/systime.h>
 #include <sys/process.h>
 #include <lv2/process.h>
@@ -35,7 +37,7 @@
 #include <strings.h>
 #include <sysutil/sysutil.h>
 
-#define APP_VERSION "v0.41"
+#define APP_VERSION "v0.42"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -209,7 +211,8 @@ static int cols_for(int p)
 static int show_settings = 0, set_row = 0, set_top = 0;   /* Settings window (SELECT) */
 static int sel[PLAT_COUNT];
 static int top_row[PLAT_COUNT];
-static int mode = 0;            /* 0 grid, 1 info panel, 2 webMAN error, 3 disc inserted */
+static int mode = 0;            /* 0 grid, 1 info panel, 2 couldn't start, 3 disc inserted */
+static char fail_why[320] = "";
 static int prev_mode = 0, disc_choice = 0;
 static DiscInfo disc;
 static float anim = 0.0f;       /* selection pulse */
@@ -805,7 +808,7 @@ static void draw_info(void)
 /* ---------------------------------------------------------------- settings window */
 enum { S_HEADER, S_BGSTYLE, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT,
        S_VIEW, S_SOUNDS, S_DIM, S_DIRECT, S_CARD, S_CLEAR_RECENT, S_CLEAR_FAVS, S_EJECT,
-       S_I_SPACE, S_I_TEMP, S_I_FW, S_I_WEBMAN, S_I_GAMES, S_I_USB, S_I_VERSION,
+       S_I_SPACE, S_I_TEMP, S_I_FW, S_I_WEBMAN, S_I_FTP, S_I_GAMES, S_I_USB, S_I_VERSION,
        S_P_EXIT, S_P_RESTART, S_P_SHUTDOWN };
 static const struct { int id; const char *label; const char *help; } set_items[] = {
     { S_HEADER, "APPEARANCE", NULL },
@@ -826,16 +829,17 @@ static const struct { int id; const char *label; const char *help; } set_items[]
     { S_CLEAR_RECENT, "Clear recently played", "Press X twice to empty the Recently played shelf on Home. Your games aren't touched." },
     { S_CLEAR_FAVS,   "Clear favourites", "Press X twice to remove every star. Your games aren't touched." },
     { S_HEADER, "STARTING GAMES", NULL },
-    { S_DIRECT, "Start games", "Directly: PS1 (and PS3) games start straight from here, no XMB in between. PS2 games always go through the XMB." },
+    { S_DIRECT, "Start PS1 games", "Directly: PS1 games start straight from here. Through the XMB: the game is loaded and you start it from its disc icon. PS3 games always start directly; PS2 games always from the XMB." },
     { S_CARD,   "PS1 memory card", "Where PS1 saves go when games start directly - one of your cards from the XMB Memory Card Utility. Automatic = the one used last." },
     { S_HEADER, "DISCS", NULL },
     { S_DISC,   "Ask when a disc is inserted", "Shows Play / Install / Make ISO when you put a disc in. Turn off to leave discs to the XMB." },
-    { S_EJECT,  "Eject disc", "Press X to eject the disc in the drive (through webMAN MOD)." },
+    { S_EJECT,  "Eject disc", "Press X to eject the disc in the drive." },
     { S_HEADER, "SYSTEM", NULL },
     { S_I_SPACE,  "Internal HDD", "Free space on the internal hard drive." },
     { S_I_TEMP,   "Temperature", "CPU and RSX (graphics chip) temperatures, updated every few seconds." },
     { S_I_FW,     "System software", "The firmware version installed on this PS3." },
-    { S_I_WEBMAN, "webMAN MOD", "PS Dashboard mounts and starts games through webMAN MOD - it needs to be running." },
+    { S_I_WEBMAN, "Game loader", "PS Dashboard loads games itself through Cobra, part of your custom firmware or PS3HEN. No other app is needed." },
+    { S_I_FTP,    "FTP server", "For the PC cover and game info tool: enter this address in the tool. It works while PS Dashboard is open." },
     { S_I_GAMES,  "Games in your library", "PS1, PS2 and PS3 games found on the internal HDD and USB drives." },
     { S_I_USB,    "USB drives", "USB storage connected right now. Games on them show up in the library." },
     { S_I_VERSION,"PS Dashboard", "The version of this dashboard." },
@@ -882,7 +886,13 @@ static const char *set_value(int id, char *buf, size_t n)
             if (!si->have_temp) return "Not available";
             snprintf(buf, n, "CPU %d\xB0" "C   RSX %d\xB0" "C", si->cpu_c, si->rsx_c); return buf; }
         case S_I_FW:   { const SysInfo *si = sysinfo_get(); return si->firmware[0] ? si->firmware : "-"; }
-        case S_I_WEBMAN: return sysinfo_get()->webman ? "Running" : "Not answering";
+        case S_I_WEBMAN: return cobra_describe();
+        case S_I_FTP: {
+            int st = ftp_status(); const char *ip = ftp_ip();
+            if (st == FTP_PORT_BUSY) { snprintf(buf, n, "%s (another FTP server)", ip[0] ? ip : "On"); return buf; }
+            if (st != FTP_RUNNING) return st == FTP_STARTING ? "Starting..." : "Off";
+            if (!ip[0]) return "No network";
+            snprintf(buf, n, "%s  port 21", ip); return buf; }
         case S_I_GAMES:  snprintf(buf, n, "PS1 %d  \xB7  PS2 %d  \xB7  PS3 %d", library[0].count, library[1].count, library[2].count); return buf;
         case S_I_USB:    { int u = sysinfo_get()->usb_drives; if (!u) return "None"; snprintf(buf, n, "%d connected", u); return buf; }
         case S_I_VERSION:return APP_VERSION;
@@ -946,7 +956,7 @@ static void draw_settings_window(void)
     gfx_rect(wx, wy, ww, 4, gfx_accent(0xff));
     gfx_text(label_x, wy + 30, 44, 0xffffffff, "Settings");
     {
-        const char *about = "PS Dashboard " APP_VERSION "  \xB7  games are mounted by webMAN MOD";
+        const char *about = "PS Dashboard " APP_VERSION;
         gfx_text(wx + ww - 60 - gfx_text_w(20, about), wy + 52, 20, 0xffffff80, about);
     }
 
@@ -1070,7 +1080,7 @@ static void settings_change(int d, int pressed_x)
             if (cur < 0) settings.ps1_card[0] = 0; else strcpy(settings.ps1_card, names[cur]);
             break; }
         case S_RESCAN: if (!pressed_x) return; rescan_library(); return;
-        case S_EJECT:  if (!pressed_x) return; webman_command("/eject.ps3"); return;
+        case S_EJECT:  if (!pressed_x) return; game_unmount(); disc_eject(); return;
         case S_P_EXIT: if (!pressed_x) return; exit_requested = 1; return;
         case S_CLEAR_RECENT: case S_CLEAR_FAVS: case S_P_RESTART: case S_P_SHUTDOWN: case S_RESET:
             if (!pressed_x) return;
@@ -1080,10 +1090,10 @@ static void settings_change(int d, int pressed_x)
             if (id == S_CLEAR_FAVS) { fav_clear(); home_build(); return; }
             if (id == S_P_RESTART || id == S_P_SHUTDOWN) {
                 gfx_begin(); gfx_background(anim * 0.2f);
-                draw_message(id == S_P_RESTART ? "Restarting" : "Turning off", "Asking webMAN MOD...");
+                draw_message(id == S_P_RESTART ? "Restarting" : "Turning off", "See you soon.");
                 gfx_end();
                 sound_shutdown();
-                webman_command(id == S_P_RESTART ? "/restart.ps3" : "/shutdown.ps3");
+                if (id == S_P_RESTART) power_restart(); else power_off();
                 return;
             }
             settings = settings_defaults; apply_sort();
@@ -1175,23 +1185,42 @@ static void draw_hints(void)
 /* ---------------------------------------------------------------- main */
 static void leave_app(void) { sound_shutdown(); exit(0); }
 
+/* the game is in the drive now: go to the XMB, where its disc icon is waiting */
+static void leave_to_xmb(const char *what)
+{
+    char line[300];
+    snprintf(line, sizeof(line), "%s is ready. Going to the XMB now - select its disc icon there and press X to play.", what);
+    gfx_begin(); gfx_background(anim * 0.2f); draw_message("Ready to play", line); gfx_end();
+    sleep(4);
+    leave_app();
+}
+
 static void start_disc(const Game *g, int disc_no)    /* disc_no 1..4 */
 {
     char line[220];
     const char *path = disc_no <= 1 ? g->path : g->discs[disc_no - 2];
-    int direct = settings.direct_ps1 && g->plat != PLAT_PS2;
-    if (g->ndiscs) snprintf(line, sizeof(line), "Starting %s (disc %d) ...%s", g->title, disc_no, direct ? "" : "  It opens by itself once the XMB has loaded - don't press any buttons.");
-    else snprintf(line, sizeof(line), "Starting %s ...%s", g->title, direct ? "" : "  It opens by itself once the XMB has loaded - don't press any buttons.");
+    /* PS3 games always start straight from here (folder games can only start that way);
+       PS1 too when "Start games: Directly" is on; PS2 games go through the XMB */
+    int direct = g->plat == PLAT_PS3 || (g->plat == PLAT_PS1 && settings.direct_ps1);
+    int wm = webman_alive();                     /* only a backup - not needed */
+    if (g->ndiscs) snprintf(line, sizeof(line), "Starting %s (disc %d) ...", g->title, disc_no);
+    else snprintf(line, sizeof(line), "Starting %s ...", g->title);
     sound_play(SND_OK);
     gfx_begin(); gfx_background(anim * 0.2f); draw_message("Loading game", line); gfx_end();
-    log_step("launch: %s", path);
+    log_step("launch: %s (direct %d, webMAN %s)", path, direct, wm ? "there" : "not there");
     recent_add(g);
-    if (settings.direct_ps1 && g->plat != PLAT_PS2) {
-        direct_start(g, path);                   /* only comes back if it couldn't start the game */
-        log_step("direct start didn't work - going the XMB way");
+    fail_why[0] = 0;
+    if (direct) {
+        direct_start(g, path, fail_why, sizeof(fail_why));   /* only comes back if it couldn't start */
+        log_step("direct start failed: %s", fail_why);
     }
-    if (launch_path(path)) { log_step("webMAN accepted"); leave_app(); }
-    log_step("webMAN not reachable");        /* webMAN mounts and starts the game after we exit */
+    if (wm && launch_path(path)) { log_step("handed to webMAN (backup)"); leave_app(); }
+    if (!direct || g->plat == PLAT_PS1) {
+        char why2[320];
+        if (game_mount(g, path, why2, sizeof(why2))) leave_to_xmb(g->title);
+        if (!fail_why[0]) snprintf(fail_why, sizeof(fail_why), "%s", why2);
+    }
+    if (!fail_why[0]) snprintf(fail_why, sizeof(fail_why), "The game couldn't be loaded.");
     mode = 2;
 }
 
@@ -1270,14 +1299,16 @@ static void disc_action(void)
         snprintf(line, sizeof(line), "Starting %s ...  It opens by itself once the XMB has loaded - don't press any buttons.", disc.title[0] ? disc.title : disc_name(disc.type));
         gfx_begin(); gfx_background(anim * 0.2f); draw_message("Loading disc", line); gfx_end();
         log_step("disc: play");
-        ok = launch_disc();
+        fail_why[0] = 0;
+        if (disc.type == DISC_PS3) direct_start_ps3_disc(disc.id, fail_why, sizeof(fail_why));   /* only returns if it failed */
+        ok = webman_alive() && launch_disc();
+        if (ok) { log_step("handed to webMAN (backup)"); leave_app(); }
+        game_unmount();                               /* make sure the XMB shows the real disc */
+        leave_to_xmb(disc.title[0] ? disc.title : disc_name(disc.type));
     } else {
         install_start();                      /* copies the disc to GAMES right here, with progress */
         return;
     }
-    if (ok) { log_step("webMAN accepted"); leave_app(); }
-    log_step("webMAN not reachable");
-    mode = 2;
 }
 
 /* the scanner sorts A-Z; Z-A is the same list reversed */
@@ -1340,7 +1371,7 @@ static void rip_start(void)
     /* a mounted game image would be read instead of the real disc - make sure it's gone */
     int tries, m = 1;
     for (tries = 0; tries < 5; tries++) {
-        unmount_disc();
+        game_unmount();
         sleep(2);
         m = disc_image_mounted();
         log_step("rip: game image still mounted = %d", m);
@@ -1382,7 +1413,7 @@ static void install_start(void)
     gfx_begin(); gfx_background(anim * 0.2f); draw_message("Getting the disc ready", "Making sure nothing else is using the drive..."); gfx_end();
     /* only unmount when a game image really is mounted: unmounting with just the disc in
        makes the system drop /dev_bdvd for a while, and the copy then finds nothing */
-    if (disc_image_mounted() == 1) { log_step("disc: an image is mounted - unmounting it first"); unmount_disc(); sleep(2); }
+    if (disc_image_mounted() == 1) { log_step("disc: an image is mounted - unmounting it first"); game_unmount(); sleep(2); }
     /* wait (up to 20 s) for the disc's files to be readable */
     while (sysLv2FsStat("/dev_bdvd/PS3_GAME/PARAM.SFO", &st) != 0 && waited < 40) {
         char line[120];
@@ -1522,10 +1553,12 @@ s32 main(s32 argc, const char *argv[])
     log_step("first frame drawn");
 
     /* a game image left mounted from last time hides any disc you put in - let it go */
-    if (disc_image_mounted() == 1) { log_step("start: a game image is still mounted, unmounting it"); unmount_disc(); }
+    if (disc_image_mounted() == 1) { log_step("start: a game image is still mounted, unmounting it"); game_unmount(); }
 
     covers_init();
     log_step("covers ok");
+    log_step("loader: %s", cobra_describe());
+    ftp_start();                                  /* for the PC cover and game info tool */
     library_scan();
     log_step("library: PS1 %d, PS2 %d, PS3 %d", library[0].count, library[1].count, library[2].count);
     lists_load();
@@ -1623,8 +1656,7 @@ s32 main(s32 argc, const char *argv[])
         if (show_settings) draw_settings_window();
         draw_hints();
         if (dimmed) gfx_rect(0, 0, SCREEN_W, SCREEN_H, 0x000000d8);
-        if (mode == 2) draw_message("webMAN MOD isn't responding",
-                                    "The dashboard starts games through webMAN MOD. Check it is installed and enabled, then try again.  (Circle to close)");
+        if (mode == 2) { char m2[400]; snprintf(m2, sizeof(m2), "%s  (Circle to close)", fail_why); draw_message("Couldn't start the game", m2); }
         gfx_end();
     }
     sound_shutdown();
