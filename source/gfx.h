@@ -38,6 +38,7 @@ u32         gfx_theme_swatch(int i);
 void        gfx_theme_set(int theme, int brightness /* 0..4 */, int effects /* 0 off, 1 wave, 2 wave + circles */);
 u32         gfx_theme_col(int level /* 0 light .. 3 dark */, u32 alpha);
 u32         gfx_accent(u32 alpha);
+void        gfx_bg_style(int style);            /* 0 PS1, 1 PS2, 2 PS3 */
 void        gfx_theme_clock(int month, int day, int hour, int minute);   /* local date and time, for "Original" */
 
 /* fonts */

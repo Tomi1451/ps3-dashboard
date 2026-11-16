@@ -93,10 +93,10 @@ int disc_poll(DiscInfo *d)
 }
 #include "../../../source/settings.h"
 #include "../../../source/gfx.h"
-const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "" };
-Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "" };
-void settings_apply(void) { gfx_theme_set(settings.theme, settings.brightness, settings.wave); settings.font = gfx_font_set(settings.font); }
-void settings_load(void) { const char *t = getenv("PREVIEW_THEME"); if (t) settings.theme = atoi(t); t = getenv("PREVIEW_SIZE"); if (t) settings.cover_size = atoi(t); t = getenv("PREVIEW_VIEW"); if (t) settings.view = atoi(t); }
+const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "", 2 };
+Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "", 2 };
+void settings_apply(void) { gfx_bg_style(settings.bgstyle); gfx_theme_set(settings.theme, settings.brightness, settings.wave); settings.font = gfx_font_set(settings.font); }
+void settings_load(void) { const char *t = getenv("PREVIEW_THEME"); if (t) settings.theme = atoi(t); t = getenv("PREVIEW_SIZE"); if (t) settings.cover_size = atoi(t); t = getenv("PREVIEW_VIEW"); if (t) settings.view = atoi(t); t = getenv("PREVIEW_BG"); if (t) settings.bgstyle = atoi(t); t = getenv("PREVIEW_WAVE"); if (t) settings.wave = atoi(t); }
 void settings_save(void) {}
 void covers_reset(void) { ntex = 0; }
 #include "../../../source/info.h"

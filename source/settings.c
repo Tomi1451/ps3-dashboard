@@ -12,11 +12,12 @@
 
 #define SETTINGS_FILE "/dev_hdd0/game/PSDB00001/USRDIR/settings.txt"
 
-const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "" };
-Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "" };
+const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "", 2 };
+Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "", 2 };
 
 static const struct { const char *key; int *v; int lo, hi; } keys[] = {
-    { "theme=",      &settings.theme,      0, 99 },
+    { "colour=",     &settings.theme,      0, 99 },   /* was theme= before v0.34 (different list) */
+    { "bgstyle=",    &settings.bgstyle,    0, 2 },
     { "brightness=", &settings.brightness, 0, 4 },
     { "wave=",       &settings.wave,       0, 2 },
     { "font=",       &settings.font,       0, 99 },
@@ -35,6 +36,7 @@ static const struct { const char *key; int *v; int lo, hi; } keys[] = {
 
 void settings_apply(void)
 {
+    gfx_bg_style(settings.bgstyle);
     gfx_theme_set(settings.theme, settings.brightness, settings.wave);
     settings.font = gfx_font_set(settings.font);
     sound_enable(settings.sounds);

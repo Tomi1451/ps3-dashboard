@@ -256,6 +256,7 @@ static u32 lerp_col(u32 a, u32 b, float t)
    filters listed on the PS3 Developer wiki. */
 typedef struct { const char *name; u32 base; } Theme;
 static const Theme themes[] = {
+    { "Classic (the style's own colours)", 0 },
     { "Original (changes with the date)", 0 },
     { "January \xB7 Silver",    0xcbcbcbff },
     { "February \xB7 Gold",     0xd8bf1aff },
@@ -276,6 +277,8 @@ static float bright = 1.0f;
 static u32 cur_base = 0x0c76c0ff;              /* colour in use (for Original it follows the clock) */
 static float night = 1.0f;                     /* Original only: 1 by day, lower at night */
 static int clk_month = 11, clk_day = 1, clk_hour = 12, clk_min = 0;
+static int bg_style = 2;                       /* 0 PS1 spheres, 1 PS2 cubes, 2 PS3 wave */
+static const u32 classic_col[3] = { 0x6b6cf0ff, 0x1d48c8ff, 0x0f6cc8ff };
 
 static u32 scale_col(u32 c, float k, u32 a)
 {
@@ -286,10 +289,13 @@ static u32 scale_col(u32 c, float k, u32 a)
 static void theme_refresh(void)
 {
     if (theme == 0) {
+        cur_base = classic_col[bg_style];
+        night = 1.0f;
+    } else if (theme == 1) {
         static const int mdays[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
         int m = (clk_month >= 1 && clk_month <= 12) ? clk_month : 11;
         float t = (float) (clk_day - 1) / mdays[m - 1];          /* drifts into next month's colour */
-        cur_base = lerp_col(themes[m].base, themes[m % 12 + 1].base, t * t);
+        cur_base = lerp_col(themes[m + 1].base, themes[m % 12 + 2].base, t * t);
         /* brightest at 10:00, darkest at 02:00 */
         float h = clk_hour + clk_min / 60.0f;
         float k;
@@ -311,7 +317,8 @@ static u32 level_col(int level)
 
 int         gfx_theme_count(void) { return THEME_COUNT; }
 const char *gfx_theme_name(int i) { return themes[i].name; }
-u32         gfx_theme_swatch(int i) { if (i == 0) return scale_col(cur_base, 1.0f, 255); return themes[i].base; }
+u32         gfx_theme_swatch(int i) { if (i <= 1) return scale_col(cur_base, 1.0f, 255); return themes[i].base; }
+void        gfx_bg_style(int st) { bg_style = (st >= 0 && st <= 2) ? st : 2; theme_refresh(); bg_ready = 0; }
 
 void gfx_theme_set(int t, int brightness, int wave)
 {
@@ -327,7 +334,7 @@ void gfx_theme_clock(int month, int day, int hour, int minute)
 {
     if (month == clk_month && day == clk_day && hour == clk_hour && minute == clk_min) return;
     clk_month = month; clk_day = day; clk_hour = hour; clk_min = minute;
-    if (theme == 0) { theme_refresh(); bg_ready = 0; }
+    if (theme == 1) { theme_refresh(); bg_ready = 0; }
 }
 
 u32 gfx_theme_col(int level, u32 alpha) { return (level_col(level) & 0xffffff00) | alpha; }
@@ -344,12 +351,32 @@ static void bg_prepare(void)
     for (i = 0; i <= GX; i++)
         for (j = 0; j <= GY; j++) {
             float x = SCREEN_W * i / GX, y = SCREEN_H * j / GY;
-            float dx = (x - 960.0f) / 1150.0f, dy = (y - 300.0f) / 950.0f;
-            float r = sqrtf(dx * dx + dy * dy);
             u32 c;
-            if (r < 0.34f) c = lerp_col(c0, c1, r / 0.34f);
-            else if (r < 0.66f) c = lerp_col(c1, c2, (r - 0.34f) / 0.32f);
-            else c = lerp_col(c2, c3, fminf(1.0f, (r - 0.66f) / 0.34f));
+            if (bg_style == 2) {
+                /* PS3: diagonal sweep, deep in the top left to bright in the bottom right */
+                float t = fminf(1.0f, fmaxf(0.0f, (x / SCREEN_W) * 0.55f + (y / SCREEN_H) * 0.6f - 0.05f));
+                u32 dark = scale_col(cur_base, 0.20f * bright * night, 255);
+                u32 mid  = scale_col(cur_base, 0.62f * bright * night, 255);
+                u32 lite = scale_col(lerp_col(cur_base, 0xffffffff, 0.12f), 0.98f * bright * night, 255);
+                c = t < 0.5f ? lerp_col(dark, mid, t / 0.5f) : lerp_col(mid, lite, (t - 0.5f) / 0.5f);
+            } else {
+                /* PS1: bright pool in the middle, dark sides; PS2: dark, with a glow of fog in the middle */
+                float cx = bg_style == 0 ? 1060.0f : 1100.0f, cy = bg_style == 0 ? 500.0f : 560.0f;
+                float sx = bg_style == 0 ? 860.0f : 980.0f, sy = bg_style == 0 ? 780.0f : 700.0f;
+                float dx = (x - cx) / sx, dy = (y - cy) / sy;
+                float r = sqrtf(dx * dx + dy * dy);
+                u32 d0 = c0, d1 = c1, d2 = c2, d3 = c3;
+                if (bg_style == 0) {
+                    d0 = scale_col(cur_base, 1.0f * bright * night, 255); d1 = scale_col(cur_base, 0.66f * bright * night, 255);
+                    d2 = scale_col(cur_base, 0.30f * bright * night, 255); d3 = scale_col(cur_base, 0.07f * night, 255);
+                } else {
+                    d0 = scale_col(cur_base, 0.34f * bright * night, 255); d1 = scale_col(cur_base, 0.17f * bright * night, 255);
+                    d2 = scale_col(cur_base, 0.07f * bright * night, 255); d3 = scale_col(cur_base, 0.025f * night, 255);
+                }
+                if (r < 0.34f) c = lerp_col(d0, d1, r / 0.34f);
+                else if (r < 0.7f) c = lerp_col(d1, d2, (r - 0.34f) / 0.36f);
+                else c = lerp_col(d2, d3, fminf(1.0f, (r - 0.7f) / 0.4f));
+            }
             bg_col[i][j] = c;
         }
     bg_ready = 1;
@@ -357,7 +384,7 @@ static void bg_prepare(void)
 
 static float wave_y(float x, float phase, float off)
 {
-    return 770.0f + off + 62.0f * sinf(x * 0.0029f + phase) + 26.0f * sinf(x * 0.0012f - phase * 0.7f + off * 0.05f);
+    return 600.0f + off + 62.0f * sinf(x * 0.0029f + phase) + 26.0f * sinf(x * 0.0012f - phase * 0.7f + off * 0.05f);
 }
 
 static void draw_particles(float phase);
@@ -404,16 +431,22 @@ void gfx_background_parts(float phase, int parts)
 
     if (parts & 8) draw_particles(phase);
 
-    if (parts & 4) {            /* fine lines as thin quads */
-        for (j = 0; j < 7; j++) {
-            u32 c = gfx_accent(40 + 10 * (3 - abs(j - 3)));
+    if (parts & 4) {            /* fine lines: two strands twisting round each other, like the XMB ribbon */
+        for (j = 0; j < 12; j++) {
+            float f = j / 11.0f;
+            u32 c = (0xffffff00) | (u32) (60 + 70 * fabsf(f - 0.5f) * 2.0f);
             tiny3d_SetPolygon(TINY3D_QUADS);
             for (x = -24; x <= SCREEN_W; x += 24) {
-                float ya = wave_y(x, phase, j * 7.0f), yb = wave_y(x + 24, phase, j * 7.0f);
-                tiny3d_VertexPos(x, ya, 1000);           tiny3d_VertexColor(c);
-                tiny3d_VertexPos(x + 24, yb, 1000);      tiny3d_VertexColor(c);
-                tiny3d_VertexPos(x + 24, yb + 1.5f, 1000); tiny3d_VertexColor(c);
-                tiny3d_VertexPos(x, ya + 1.5f, 1000);    tiny3d_VertexColor(c);
+                float x2 = x + 24;
+                float a0 = wave_y(x, phase, 0) + 48 * sinf(x * 0.0019f + phase * 0.6f);
+                float b0 = wave_y(x, phase, 0) - 48 * sinf(x * 0.0019f + phase * 0.6f) + 18;
+                float a1 = wave_y(x2, phase, 0) + 48 * sinf(x2 * 0.0019f + phase * 0.6f);
+                float b1 = wave_y(x2, phase, 0) - 48 * sinf(x2 * 0.0019f + phase * 0.6f) + 18;
+                float ya = a0 + (b0 - a0) * f, yb = a1 + (b1 - a1) * f;
+                tiny3d_VertexPos(x, ya, 1000);            tiny3d_VertexColor(c);
+                tiny3d_VertexPos(x2, yb, 1000);           tiny3d_VertexColor(c);
+                tiny3d_VertexPos(x2, yb + 1.6f, 1000);    tiny3d_VertexColor(c);
+                tiny3d_VertexPos(x, ya + 1.6f, 1000);     tiny3d_VertexColor(c);
             }
             tiny3d_End();
         }
@@ -496,9 +529,188 @@ static void draw_particles(float phase)
     }
 }
 
+/* ------------------------------------------------------------------ PS1 style: shaded spheres
+   Like the original PlayStation start-up menu: lit spheres in pairs drifting over a blue pool. */
+static void sphere(float cx, float cy, float r, float alpha)
+{
+    const int N = 28;
+    int k;
+    u32 a = (u32) (255 * alpha);
+    u32 hi  = (lerp_col(scale_col(cur_base, 1.05f * night, 255), 0xffffffff, 0.30f) & 0xffffff00) | a;
+    u32 lit = (scale_col(cur_base, 0.66f * night, 255) & 0xffffff00) | a;
+    u32 dk  = (scale_col(cur_base, 0.17f * night, 255) & 0xffffff00) | a;
+    float hx = cx - r * 0.18f, hy = cy - r * 0.26f;          /* highlight, lit from the top left */
+    soft_circle(cx + r * 0.10f, cy + r * 0.16f, r * 1.22f, 0x000000ff, (int) (70 * alpha), 20);  /* shadow */
+    tiny3d_SetPolygon(TINY3D_QUADS);
+    for (k = 0; k < N; k++) {
+        float a0 = k * 6.2831853f / N, a1 = (k + 1) * 6.2831853f / N;
+        /* rim facing the light is lighter */
+        float l0 = 0.5f - 0.5f * cosf(a0 - 3.93f), l1 = 0.5f - 0.5f * cosf(a1 - 3.93f);
+        u32 r0 = lerp_col(lit, dk, l0) & 0xffffff00, r1 = lerp_col(lit, dk, l1) & 0xffffff00;
+        tiny3d_VertexPos(hx, hy, 1000);                                  tiny3d_VertexColor(hi);
+        tiny3d_VertexPos(hx, hy, 1000);                                  tiny3d_VertexColor(hi);
+        tiny3d_VertexPos(cx + r * cosf(a1), cy + r * sinf(a1), 1000);    tiny3d_VertexColor(r1 | a);
+        tiny3d_VertexPos(cx + r * cosf(a0), cy + r * sinf(a0), 1000);    tiny3d_VertexColor(r0 | a);
+    }
+    tiny3d_End();
+}
+
+static void draw_ps1(float phase, int extras)
+{
+    /* pairs: a bigger sphere with a smaller one resting against it, slowly turning */
+    static const float pairs[][4] = {      /* x, y, big radius, drift speed */
+        {  330,  190, 92, 1.0f }, {  640,  800, 104, 0.8f }, { 1650,  880, 80, 1.2f }, { 1520,  150, 58, 0.9f }, {  120,  620, 64, 1.1f },
+    };
+    int n = extras ? 5 : 3, i;
+    for (i = 0; i < n; i++) {
+        float t = phase * 0.22f * pairs[i][3] + i * 1.7f;
+        float cx = pairs[i][0] + 70 * sinf(t * 0.7f) + 30 * sinf(t * 1.3f + i);
+        float cy = pairs[i][1] + 46 * cosf(t * 0.6f + i * 0.5f);
+        float R = pairs[i][2] * (1.0f + 0.04f * sinf(t * 1.1f));
+        float rs = R * 0.66f, ang = 0.6f + 0.45f * sinf(t * 0.5f) + (i & 1) * 2.4f;
+        float sx = cx + cosf(ang) * (R + rs) * 0.86f, sy = cy + sinf(ang) * (R + rs) * 0.86f;
+        /* draw the one further down-right first so they overlap like the original */
+        if (sinf(ang) > 0) { sphere(cx, cy, R, 1.0f); sphere(sx, sy, rs, 1.0f); }
+        else               { sphere(sx, sy, rs, 1.0f); sphere(cx, cy, R, 1.0f); }
+    }
+}
+
+/* ------------------------------------------------------------------ PS2 style: cubes and light trails
+   Like the PS2 browser: blocks floating towards you through dark blue fog, with coloured
+   lights streaking past. Simple 3D: rotate, project, draw the faces that face the camera. */
+#define NCUBES 16
+typedef struct { float x, y, z; } V3;
+
+static void cube_draw(V3 pos, V3 size, float ry, float rx, float glass)
+{
+    static const int face[6][4] = { {0,1,2,3}, {5,4,7,6}, {4,0,3,7}, {1,5,6,2}, {4,5,1,0}, {3,2,6,7} };
+    static const float nrm[6][3] = { {0,0,-1}, {0,0,1}, {-1,0,0}, {1,0,0}, {0,-1,0}, {0,1,0} };
+    V3 v[8]; float px[8], py[8];
+    float cy = cosf(ry), sy = sinf(ry), cx = cosf(rx), sx = sinf(rx);
+    const float F = 1000.0f;
+    int i, k;
+    for (i = 0; i < 8; i++) {
+        float x = (i == 1 || i == 2 || i == 5 || i == 6) ? size.x : -size.x, y = (i & 2) ? size.y : -size.y, z = (i & 4) ? size.z : -size.z;
+        float x1 = x * cy + z * sy, z1 = -x * sy + z * cy;          /* turn round y */
+        float y1 = y * cx - z1 * sx, z2 = y * sx + z1 * cx;         /* tip round x */
+        v[i].x = x1 + pos.x; v[i].y = y1 + pos.y; v[i].z = z2 + pos.z;
+        if (v[i].z < 60) return;                                    /* too close: skip */
+        px[i] = 960 + v[i].x * F / v[i].z; py[i] = 540 + v[i].y * F / v[i].z;
+    }
+    float fog = fminf(1.0f, fmaxf(0.0f, (pos.z - 500) / 3200.0f));
+    float near = fminf(1.0f, (pos.z - 180) / 260.0f);              /* fade as it passes the camera */
+    if (near <= 0) return;
+    u32 body = lerp_col(0xb4c4e4ff, lerp_col(cur_base, 0xffffffff, 0.55f), 0.25f);
+    u32 back = scale_col(cur_base, 0.05f * night, 255);
+    for (k = 0; k < 6; k++) {
+        const int *f = face[k];
+        float cr = (px[f[1]] - px[f[0]]) * (py[f[2]] - py[f[0]]) - (py[f[1]] - py[f[0]]) * (px[f[2]] - px[f[0]]);
+        if (cr <= 0) continue;                                      /* facing away */
+        /* light from the top left, in front */
+        float nx = nrm[k][0], ny = nrm[k][1], nz = nrm[k][2];
+        float nx1 = nx * cy + nz * sy, nz1 = -nx * sy + nz * cy;
+        float ny1 = ny * cx - nz1 * sx, nz2 = ny * sx + nz1 * cx;
+        float l = -(nx1 * -0.45f + ny1 * -0.55f + nz2 * 0.70f);
+        l = 0.22f + 0.78f * fmaxf(0.0f, fminf(1.0f, l * 0.5f + 0.55f));
+        u32 c = lerp_col(scale_col(body, l * night, 255), back, fog * 0.85f);
+        u32 a = (u32) (255 * near * (glass > 0 ? 0.22f : 1.0f));
+        u32 top = (c & 0xffffff00) | a, bot = (scale_col(c, 0.72f, 255) & 0xffffff00) | a;   /* a little shading down each face */
+        tiny3d_SetPolygon(TINY3D_QUADS);
+        tiny3d_VertexPos(px[f[0]], py[f[0]], 1000); tiny3d_VertexColor(top);
+        tiny3d_VertexPos(px[f[1]], py[f[1]], 1000); tiny3d_VertexColor(top);
+        tiny3d_VertexPos(px[f[2]], py[f[2]], 1000); tiny3d_VertexColor(bot);
+        tiny3d_VertexPos(px[f[3]], py[f[3]], 1000); tiny3d_VertexColor(bot);
+        tiny3d_End();
+    }
+}
+
+static void trail(float phase, int i)
+{
+    static const u32 cols[8] = { 0x3cff6aff, 0xff3030ff, 0xff4cf0ff, 0x8a96ffff, 0x3cff6aff, 0xff3030ff, 0xff4cf0ff, 0x8a96ffff };
+    float life = 7.0f + 3.0f * hash01(i, 40);
+    float t = (phase * 0.9f + hash01(i, 41) * life) / life;
+    int n = (int) t; t -= n;
+    /* a new curved path every life, from one edge region towards the middle or across */
+    float x0 = hash01(i * 13 + n, 42) * SCREEN_W, y0 = SCREEN_H + 60;
+    int side = (int) (hash01(i * 13 + n, 43) * 3);
+    if (side == 1) { x0 = -60; y0 = hash01(i * 13 + n, 44) * SCREEN_H; }
+    if (side == 2) { x0 = SCREEN_W + 60; y0 = hash01(i * 13 + n, 44) * SCREEN_H; }
+    float x2 = 500 + hash01(i * 13 + n, 45) * 920, y2 = 200 + hash01(i * 13 + n, 46) * 520;
+    float x1 = (x0 + x2) / 2 + (hash01(i * 13 + n, 47) - 0.5f) * 700, y1 = (y0 + y2) / 2 + (hash01(i * 13 + n, 48) - 0.5f) * 500;
+    float head = t * 1.25f;                                    /* gets there at 80% of its life, then fades */
+    float fade = fminf(1.0f, fminf(t / 0.08f, (1.0f - t) / 0.25f));
+    if (fade <= 0) return;
+    if (head > 1) head = 1;
+    const int SEG = 36;
+    float len = 0.42f, px = 0, py = 0;
+    int k;
+    u32 col = cols[i & 7];
+    for (k = 0; k <= SEG; k++) {
+        float u = head - len * (1.0f - (float) k / SEG);
+        if (u < 0) u = 0;
+        float a = 1 - u;
+        float x = a * a * x0 + 2 * a * u * x1 + u * u * x2, y = a * a * y0 + 2 * a * u * y1 + u * u * y2;
+        if (k > 0) {
+            float w = 0.6f + 3.2f * k / SEG, f = (float) k / SEG;
+            float dx = x - px, dy = y - py, d = sqrtf(dx * dx + dy * dy) + 0.001f;
+            float ox = -dy / d * w / 2, oy = dx / d * w / 2;
+            u32 c0 = (col & 0xffffff00) | (u32) (220 * fade * f * f), c1 = (col & 0xffffff00) | (u32) (220 * fade * f * f);
+            tiny3d_SetPolygon(TINY3D_QUADS);
+            tiny3d_VertexPos(px - ox, py - oy, 1000); tiny3d_VertexColor(c0);
+            tiny3d_VertexPos(x - ox, y - oy, 1000);   tiny3d_VertexColor(c1);
+            tiny3d_VertexPos(x + ox, y + oy, 1000);   tiny3d_VertexColor(c1);
+            tiny3d_VertexPos(px + ox, py + oy, 1000); tiny3d_VertexColor(c0);
+            tiny3d_End();
+        }
+        px = x; py = y;
+    }
+    soft_circle(px, py, 26, col, (int) (120 * fade), 14);       /* glowing head */
+    soft_circle(px, py, 5, 0xffffffff, (int) (240 * fade), 10);
+}
+
+static void draw_ps2(float phase, int extras)
+{
+    int i, j, order[NCUBES];
+    float zs[NCUBES];
+    V3 pos[NCUBES], size[NCUBES];
+    float ry[NCUBES], rx[NCUBES], glass[NCUBES];
+    const float range = 3600.0f;
+
+    /* drifting fog */
+    for (i = 0; i < 5; i++) {
+        float fx = 980 + 360 * sinf(phase * 0.05f + i * 1.9f), fy = 540 + 200 * cosf(phase * 0.04f + i * 2.3f);
+        soft_circle(fx, fy, 320 + 100 * hash01(i, 60), lerp_col(cur_base, 0xffffffff, 0.1f), 40, 20);
+    }
+
+    for (i = 0; i < NCUBES; i++) {
+        /* each block keeps to a lane round the centre and comes slowly towards you */
+        float ang = hash01(i, 50) * 6.2831853f, rad = 620 + 560 * hash01(i, 51);
+        float z = range + 240 - fmodf(hash01(i, 52) * range + phase * 55.0f, range);
+        pos[i].x = cosf(ang) * rad * 1.25f; pos[i].y = sinf(ang) * rad * 0.8f; pos[i].z = z;
+        float s = 55 + 75 * hash01(i, 53);
+        size[i].x = s; size[i].y = s; size[i].z = s;
+        if (hash01(i, 54) < 0.35f) size[i].z = s * (3.0f + 3.0f * hash01(i, 55));     /* long pillars */
+        ry[i] = (hash01(i, 56) - 0.5f) * 0.9f + phase * 0.04f * (hash01(i, 57) - 0.5f);
+        rx[i] = (hash01(i, 58) - 0.5f) * 0.6f;
+        glass[i] = hash01(i, 59) < 0.12f ? 1.0f : 0.0f;
+        zs[i] = z; order[i] = i;
+    }
+    for (i = 1; i < NCUBES; i++) {                                  /* far ones first */
+        int o = order[i]; j = i - 1;
+        while (j >= 0 && zs[order[j]] < zs[o]) { order[j + 1] = order[j]; j--; }
+        order[j + 1] = o;
+    }
+    for (i = 0; i < NCUBES; i++) { int c = order[i]; cube_draw(pos[c], size[c], ry[c], rx[c], glass[c]); }
+
+    for (i = 0; i < (extras ? 8 : 4); i++) trail(phase, i);
+}
+
 void gfx_background(float phase)
 {
-    gfx_background_parts(phase, wave_on == 0 ? 1 : wave_on == 1 ? 7 : 15);
+    if (wave_on == 0) phase = 3.0f;                 /* still picture */
+    if (bg_style == 0) { gfx_background_parts(phase, 1); draw_ps1(phase, wave_on == 2); return; }
+    if (bg_style == 1) { gfx_background_parts(phase, 1); draw_ps2(phase, wave_on == 2); return; }
+    gfx_background_parts(phase, wave_on == 2 ? 15 : 7);
 }
 
 /* ------------------------------------------------------------------ text */

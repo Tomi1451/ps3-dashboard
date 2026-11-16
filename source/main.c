@@ -35,7 +35,7 @@
 #include <strings.h>
 #include <sysutil/sysutil.h>
 
-#define APP_VERSION "v0.33"
+#define APP_VERSION "v0.34"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -932,15 +932,16 @@ static void draw_info(void)
 }
 
 /* ---------------------------------------------------------------- settings window */
-enum { S_HEADER, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT,
+enum { S_HEADER, S_BGSTYLE, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT,
        S_VIEW, S_SOUNDS, S_DIM, S_DIRECT, S_CARD, S_CLEAR_RECENT, S_CLEAR_FAVS, S_EJECT,
        S_I_SPACE, S_I_TEMP, S_I_FW, S_I_WEBMAN, S_I_GAMES, S_I_USB, S_I_VERSION,
        S_P_EXIT, S_P_RESTART, S_P_SHUTDOWN };
 static const struct { int id; const char *label; const char *help; } set_items[] = {
     { S_HEADER, "APPEARANCE", NULL },
-    { S_THEME,  "Background colour", "The PS3's own XMB colours. Original changes with the date like the real XMB and gets darker at night; or pick one month's colour to keep." },
+    { S_BGSTYLE, "Background style", "PS1: shaded spheres floating on blue, like the PlayStation start-up menu. PS2: cubes and coloured light trails in a dark fog, like the PS2 browser. PS3: the XMB wave and sparkles." },
+    { S_THEME,  "Background colour", "Classic = each style's own colours. Original changes with the date like the real XMB and gets darker at night. Or keep one of the PS3's twelve month colours." },
     { S_BRIGHT, "Background brightness", "How bright the background is." },
-    { S_WAVE,   "Background animation", "Like the PS3 home screen: the moving wave, plus sparkles and soft circles floating past." },
+    { S_WAVE,   "Background animation", "Off = a still picture. On = everything moves. On + extras adds more: sparkles (PS3), more light trails (PS2), more spheres (PS1)." },
     { S_FONT,   "Font", "The PS3's own system fonts. Fonts your firmware doesn't have are skipped." },
     { S_SOUNDS, "Navigation sounds", "Soft clicks and chimes as you move around. Made by the dashboard itself." },
     { S_DIM,    "Dim the screen when idle", "Darkens the screen after a while with no buttons pressed, to look after your TV. Any button brings it back." },
@@ -990,9 +991,10 @@ static const char *set_value(int id, char *buf, size_t n)
     static const char *sizes[3] = { "Small", "Medium", "Large" };
     static const char *open[4] = { "Last used", "PS1", "PS2", "PS3" };
     switch (id) {
+        case S_BGSTYLE: return settings.bgstyle == 0 ? "PS1 \xB7 Spheres" : settings.bgstyle == 1 ? "PS2 \xB7 Cubes and light trails" : "PS3 \xB7 XMB wave";
         case S_THEME:  return gfx_theme_name(settings.theme);
         case S_BRIGHT: return bnames[settings.brightness];
-        case S_WAVE:   return settings.wave == 2 ? "Wave + circles" : settings.wave == 1 ? "Wave only" : "Off";
+        case S_WAVE:   return settings.wave == 2 ? "On + extras" : settings.wave == 1 ? "On" : "Off";
         case S_FONT:   return gfx_font_name(settings.font);
         case S_SIZE:   return sizes[settings.cover_size];
         case S_TITLES: return settings.titles ? "Show" : "Hide";
@@ -1123,6 +1125,7 @@ static void settings_change(int d, int pressed_x)
 {
     int id = set_items[set_row].id, n, i;
     switch (id) {
+        case S_BGSTYLE: settings.bgstyle = (settings.bgstyle + d + 3) % 3; break;
         case S_THEME:  n = gfx_theme_count(); settings.theme = (settings.theme + d + n) % n; break;
         case S_BRIGHT: if (settings.brightness + d < 0 || settings.brightness + d > 4) return; settings.brightness += d; break;
         case S_WAVE:   settings.wave = (settings.wave + d + 3) % 3; break;

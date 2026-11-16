@@ -3,7 +3,7 @@
 #define SETTINGS_H
 
 typedef struct {
-    int theme;        /* background colour (gfx theme index) */
+    int theme;        /* background colour: 0 Classic, 1 Original (follows the date), 2.. month colours */
     int brightness;   /* 0..4, 2 = normal */
     int wave;         /* background effects: 0 off, 1 wave, 2 wave + floating circles */
     int font;         /* gfx font index */
@@ -18,6 +18,7 @@ typedef struct {
     int dim;          /* dim when idle: 0 off, 1 5 min, 2 15 min, 3 30 min */
     int direct_ps1;   /* 1 = start PS1 games straight from the dashboard (no XMB in between) */
     char ps1_card[64];/* memory card for slot 1 (file in /dev_hdd0/savedata/vmc), "" = automatic */
+    int bgstyle;      /* background: 0 PS1 spheres, 1 PS2 cubes and light trails, 2 PS3 wave */
 } Settings;
 
 extern Settings settings;
