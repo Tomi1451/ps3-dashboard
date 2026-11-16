@@ -35,7 +35,7 @@
 #include <strings.h>
 #include <sysutil/sysutil.h>
 
-#define APP_VERSION "v0.37"
+#define APP_VERSION "v0.38"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -392,10 +392,11 @@ static void draw_nav(void)
         int on = (t == tab);
         float k = on ? 1.25f : 1.0f, cx = x + 56, cy = 58;
         u32 col = on ? 0xffffffff : 0xffffffa0;
-        if (on) circle_fill(cx, cy, 34, gfx_accent(0x26));          /* soft glow behind the active icon */
-        if (t == 0) icon_house(cx, cy, k, col);
-        else icon_console(cx, cy, k, t - 1, on ? 0xff : 0xb0);
-        gfx_text_center(cx, 92, on ? 24 : 21, col, labels[t]);
+        if (t == 0) {                                               /* Home: house with its name under it */
+            if (on) circle_fill(cx, cy, 34, gfx_accent(0x26));
+            icon_house(cx, cy, k, col);
+            gfx_text_center(cx, 92, on ? 24 : 21, col, labels[t]);
+        } else gfx_text_center(cx, on ? 52 : 60, on ? 44 : 34, col, labels[t]);   /* consoles: just the name */
         if (on) gfx_rect(cx - 22, 124, 44, 3, gfx_accent(0xff));
         x += 124;
     }
