@@ -35,7 +35,7 @@
 #include <strings.h>
 #include <sysutil/sysutil.h>
 
-#define APP_VERSION "v0.35"
+#define APP_VERSION "v0.36"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -1030,16 +1030,42 @@ static const char *set_value(int id, char *buf, size_t n)
 
 static int set_selectable(int i) { return set_items[i].id != S_HEADER && set_items[i].id != S_ABOUT; }
 
+/* Settings tabs: each section header starts a tab, L1 / R1 switch between them */
+static int sec_of(int i) { while (i > 0 && set_items[i].id != S_HEADER) i--; return i; }
+static int sec_end(int h) { int i = h + 1; while (i < SET_COUNT && set_items[i].id != S_HEADER) i++; return i; }
+static int sec_first(int h) { int i; for (i = h + 1; i < sec_end(h); i++) if (set_selectable(i)) return i; return h + 1; }
+static const char *sec_name(int h)
+{
+    switch (set_items[h + 1].id) {
+        case S_BGSTYLE: return "Appearance";
+        case S_VIEW:    return "Library";
+        case S_DIRECT:  return "Starting games";
+        case S_DISC:    return "Discs";
+        case S_I_SPACE: return "System";
+        default:        return "Power";
+    }
+}
+static void settings_tab(int d)
+{
+    int h = sec_of(set_row), i;
+    if (d > 0) { h = sec_end(h); if (h >= SET_COUNT) h = 0; }
+    else {
+        if (h == 0) { for (i = 0; i < SET_COUNT; i++) if (set_items[i].id == S_HEADER) h = i; }
+        else h = sec_of(h - 1);
+    }
+    set_row = sec_first(h); set_top = h + 1;
+}
+
 /* fixed columns, so labels and values can never run into each other whatever the font:
    label column on the left, a value box on the right with < > at its edges */
 static void draw_settings_window(void)
 {
     char buf[64];
     const float ww = 1320, wh = 760, wx = (SCREEN_W - ww) / 2, wy = (SCREEN_H - wh) / 2;   /* centred */
-    const float list_top = wy + 112, list_bottom = wy + wh - 112;
+    const float list_bottom = wy + wh - 112;
     const float label_x = wx + 60, label_w = 620;
     const float box_x = wx + 700, box_w = ww - 700 - 60;
-    const float ROW = 56, HEAD = 50;
+    const float ROW = 56;
     int i;
 
     gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0xb0));
@@ -1053,28 +1079,48 @@ static void draw_settings_window(void)
         gfx_text(wx + ww - 60 - gfx_text_w(20, about), wy + 52, 20, 0xffffff80, about);
     }
 
-    /* scroll so the selected row (and its section name) is in view */
+    /* tab bar: one tab per section, L1 / R1 to switch */
+    int sh = sec_of(set_row), se = sec_end(sh);
+    {
+        float tx = label_x + 64, ty = wy + 104;
+        int h;
+        float lw = gfx_text_w(16, "L1") + 16;
+        gfx_rect(label_x, ty + 8, lw, 28, 0x00000060); gfx_frame(label_x, ty + 8, lw, 28, 1, 0xffffff60);
+        gfx_text(label_x + 8, ty + 14, 16, 0xffffffff, "L1");
+        for (h = 0; h < SET_COUNT; h = sec_end(h)) {
+            const char *nm = sec_name(h);
+            float w = gfx_text_w(22, nm) + 40;
+            if (h == sh) {
+                gfx_rect(tx, ty, w, 44, 0xffffffff);
+                gfx_text(tx + 20, ty + 10, 22, gfx_theme_col(3, 0xff), nm);
+            } else {
+                gfx_rect(tx, ty, w, 44, 0xffffff14);
+                gfx_text(tx + 20, ty + 10, 22, 0xffffffb0, nm);
+            }
+            tx += w + 10;
+        }
+        gfx_rect(tx + 4, ty + 8, lw, 28, 0x00000060); gfx_frame(tx + 4, ty + 8, lw, 28, 1, 0xffffff60);
+        gfx_text(tx + 12, ty + 14, 16, 0xffffffff, "R1");
+        gfx_rect(label_x, ty + 62, ww - 120, 1, 0xffffff26);
+    }
+    const float rows_top = wy + 186;
+
+    /* scroll within the tab so the selected row is in view */
+    if (set_top <= sh || set_top >= se) set_top = sh + 1;
     if (set_row < set_top) set_top = set_row;
-    if (set_top > 0 && set_items[set_top - 1].id == S_HEADER && set_row == set_top) set_top--;
     for (;;) {
-        float yy = list_top;
-        for (i = set_top; i <= set_row; i++) yy += set_items[i].id == S_HEADER ? HEAD : ROW;
+        float yy = rows_top;
+        for (i = set_top; i <= set_row; i++) yy += ROW;
         if (yy <= list_bottom || set_top >= set_row) break;
         set_top++;
     }
 
-    float y = list_top;
+    float y = rows_top;
     int last_drawn = set_top - 1;
-    for (i = set_top; i < SET_COUNT; i++) {
+    for (i = set_top; i < se; i++) {
         int id = set_items[i].id, on = (i == set_row);
-        if (y + (id == S_HEADER ? HEAD : ROW) > list_bottom) break;
+        if (y + ROW > list_bottom) break;
         last_drawn = i;
-        if (id == S_HEADER) {
-            gfx_text(label_x, y + 16, 18, gfx_accent(0xe0), set_items[i].label);
-            gfx_rect(label_x, y + 42, ww - 120, 1, 0xffffff26);
-            y += HEAD;
-            continue;
-        }
         if (on) {
             gfx_rect(wx + 36, y + 2, ww - 72, ROW - 6, 0xffffff22);
             gfx_frame(wx + 36, y + 2, ww - 72, ROW - 6, 1, 0xffffff70);
@@ -1108,11 +1154,11 @@ static void draw_settings_window(void)
     }
 
     /* scroll bar instead of text, so nothing can collide */
-    if (set_top > 0 || last_drawn < SET_COUNT - 1) {
-        float tx = wx + ww - 22, th = list_bottom - list_top;
-        float a = (float) set_top / SET_COUNT, b = (float) (last_drawn + 1) / SET_COUNT;
-        gfx_rect(tx, list_top, 4, th, 0xffffff1a);
-        gfx_rect(tx, list_top + th * a, 4, th * (b - a), 0xffffffa0);
+    if (set_top > sh + 1 || last_drawn < se - 1) {
+        float tx = wx + ww - 22, th = list_bottom - rows_top, n = se - sh - 1;
+        float a = (set_top - sh - 1) / n, b = (last_drawn - sh) / n;
+        gfx_rect(tx, rows_top, 4, th, 0xffffff1a);
+        gfx_rect(tx, rows_top + th * a, 4, th * (b - a), 0xffffffa0);
     }
 
     /* help for the selected setting, in its own strip at the bottom */
@@ -1184,8 +1230,12 @@ static void settings_window_input(void)
     if (pad_pressed & (B_UP | B_DOWN)) sound_play(SND_MOVE);
     if (pad_pressed & (B_LEFT | B_RIGHT | B_CROSS)) sound_play(SND_TAB);
     if (pad_pressed & (B_UP | B_DOWN | B_LEFT | B_RIGHT)) confirm_id = -1;
-    if (pad_pressed & B_DOWN) for (i = set_row + 1; i < SET_COUNT; i++) if (set_selectable(i)) { set_row = i; break; }
-    if (pad_pressed & B_UP)   for (i = set_row - 1; i >= 0; i--)        if (set_selectable(i)) { set_row = i; break; }
+    if (pad_pressed & (B_L1 | B_R1)) { confirm_id = -1; settings_tab((pad_pressed & B_R1) ? 1 : -1); sound_play(SND_TAB); return; }
+    {   /* up / down stay inside the tab */
+        int sh = sec_of(set_row), se = sec_end(sh);
+        if (pad_pressed & B_DOWN) for (i = set_row + 1; i < se; i++) if (set_selectable(i)) { set_row = i; break; }
+        if (pad_pressed & B_UP)   for (i = set_row - 1; i > sh; i--) if (set_selectable(i)) { set_row = i; break; }
+    }
     if (pad_pressed & B_RIGHT) settings_change(1, 0);
     if (pad_pressed & B_LEFT)  settings_change(-1, 0);
     if (pad_pressed & B_CROSS) settings_change(1, 1);
@@ -1213,6 +1263,7 @@ static void draw_hints(void)
     float x = MARGIN_X, y = FOOTER_Y + 40;
     if (!show_settings && mode != 4 && mode != 7) draw_footer_band();   /* windows dim everything themselves */
     if (show_settings) {
+        x = hint_pill(x, y, "L1 / R1", "Tabs");
         x = hint_pill(x, y, "UP / DOWN", "Choose");
         x = hint_pill(x, y, "LEFT / RIGHT", "Change");
         x = hint(x, y, 'o', "Close");
