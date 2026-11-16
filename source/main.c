@@ -37,7 +37,7 @@
 #include <strings.h>
 #include <sysutil/sysutil.h>
 
-#define APP_VERSION "v0.42"
+#define APP_VERSION "v0.43"
 
 /* ---------------------------------------------------------------- input */
 enum {

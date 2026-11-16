@@ -18,6 +18,7 @@
 
 /* Cobra opcodes (syscall 8) */
 #define OP_GET_VERSION        0x7000
+#define OP_GET_VERSION2       0x7001
 #define OP_GET_DISC_TYPE      0x7020
 #define OP_FAKE_STORAGE_EVENT 0x7022
 #define OP_MOUNT_PS3_DISCFILE 0x7024
@@ -59,7 +60,7 @@ static void disc_types(u32 *real, u32 *eff, u32 *img)
 int cobra_present(void)
 {
     u32 v = 0;
-    return sc8_2(OP_GET_VERSION, (u64)(u32) &v) == 0 && v != 0;
+    return sc8_2(OP_GET_VERSION, (u64)(u32) &v) == 0;
 }
 
 int cobra_is_hen(void) { return sc8_1(OP_IS_HEN) == OP_IS_HEN; }
@@ -67,8 +68,10 @@ int cobra_is_hen(void) { return sc8_1(OP_IS_HEN) == OP_IS_HEN; }
 const char *cobra_describe(void)
 {
     static char s[48];
-    u32 v = 0;
-    if (sc8_2(OP_GET_VERSION, (u64)(u32) &v) != 0 || !v) return "Not found";
+    u32 v1 = 0;
+    u16 v = 0;
+    if (sc8_2(OP_GET_VERSION, (u64)(u32) &v1) != 0) return "Not found";
+    if (sc8_2(OP_GET_VERSION2, (u64)(u32) &v) != 0 || !v) { snprintf(s, sizeof(s), "Cobra (%s)", cobra_is_hen() ? "PS3HEN" : "CFW"); return s; }
     if ((v & 0x0F) == 0) snprintf(s, sizeof(s), "Cobra %X.%X (%s)", v >> 8, (v & 0xF0) >> 4, cobra_is_hen() ? "PS3HEN" : "CFW");
     else                 snprintf(s, sizeof(s), "Cobra %X.%02X (%s)", v >> 8, v & 0xFF, cobra_is_hen() ? "PS3HEN" : "CFW");
     return s;
