@@ -18,21 +18,30 @@
 
 typedef struct { float f0, f1, t, len, amp; } Voice;
 
-static volatile int enabled = 0, quit = 0, started = 0, pending = -1;
+static volatile int enabled = 0, quit = 0, started = 0;
+/* sounds asked for but not started yet: a small queue so quick presses aren't lost
+   (the screen adds at the head, the sound thread takes from the tail) */
+#define QN 16
+static volatile int queue[QN];
+static volatile u32 q_head = 0, q_tail = 0;
 static sys_ppu_thread_t th;
 static Voice voices[MAXV];
 
 static void start_voice(int which)
 {
     static const struct { float f0, f1, len, amp; } def[] = {
-        { 1650, 1650, 0.035f, 0.10f },     /* move: tiny tick */
+        { 1180, 1100, 0.065f, 0.16f },     /* move: short soft tick */
         { 880,  1320, 0.16f,  0.14f },     /* ok: rising chime */
         { 700,  440,  0.12f,  0.12f },     /* back: falling */
-        { 1200, 1500, 0.06f,  0.10f },     /* tab */
+        { 1000, 1350, 0.08f,  0.15f },     /* tab */
         { 1320, 1980, 0.22f,  0.12f },     /* star */
     };
     int i, v = 0;
-    for (i = 0; i < MAXV; i++) if (voices[i].t >= voices[i].len) { v = i; break; }
+    float oldest = -1;
+    for (i = 0; i < MAXV; i++) {
+        if (voices[i].t >= voices[i].len) { v = i; break; }
+        if (voices[i].t / voices[i].len > oldest) { oldest = voices[i].t / voices[i].len; v = i; }   /* all busy: replace the one nearly done */
+    }
     voices[v].f0 = def[which].f0; voices[v].f1 = def[which].f1;
     voices[v].len = def[which].len; voices[v].amp = def[which].amp; voices[v].t = 0;
 }
@@ -75,18 +84,24 @@ static void audio_thread(void *arg)
     audioPortStart(port);
     log_step("sound: on");
 
-    u32 next = 1;
+    u32 next = ((u32) *(volatile u64 *)(u64) cfg.readIndex + 1) % AUDIO_BLOCK_8;
     float *data = (float *)(u64) cfg.audioDataStart;
     volatile u64 *read_index = (volatile u64 *)(u64) cfg.readIndex;
     while (!quit) {
-        int p = pending;
-        if (p >= 0) { pending = -1; if (enabled) start_voice(p); }
+        while (q_tail != q_head) {
+            int p = queue[q_tail % QN];
+            q_tail++;
+            if (enabled) start_voice(p);
+        }
         u32 cur = (u32) *read_index;
-        while (next != cur) {                       /* refill every block the hardware has played */
+        /* keep the blocks just ahead of the one playing filled; new sounds go into the
+           nearest block so they start within a few milliseconds */
+        u32 want = (cur + 4) % AUDIO_BLOCK_8;
+        while (next != want) {
             fill(data + 2 * AUDIO_BLOCK_SAMPLES * next);
             next = (next + 1) % AUDIO_BLOCK_8;
         }
-        sysUsleep(2000);
+        sysUsleep(1000);
     }
     audioPortStop(port);
     audioPortClose(port);
@@ -99,7 +114,7 @@ void sound_enable(int on)
     enabled = on;
     if (on && !started) {
         started = 1;
-        if (sysThreadCreate(&th, audio_thread, NULL, 1000, 0x4000, THREAD_JOINABLE, "sound") != 0) {
+        if (sysThreadCreate(&th, audio_thread, NULL, 900, 0x4000, THREAD_JOINABLE, "sound") != 0) {
             log_step("sound: thread not started");
             started = 0;
         }
@@ -108,7 +123,11 @@ void sound_enable(int on)
 
 void sound_play(int which)
 {
-    if (enabled && started) pending = which;
+    if (!enabled || !started) return;
+    if (q_head - q_tail >= QN) return;        /* thread is behind: drop rather than block */
+    queue[q_head % QN] = which;
+    __sync_synchronize();
+    q_head++;
 }
 
 void sound_shutdown(void)
