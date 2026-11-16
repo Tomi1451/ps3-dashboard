@@ -320,58 +320,6 @@ static void icon_house(float cx, float cy, float k, u32 c)
     gfx_rect(cx - 4 * k, cy + 4 * k, 8 * k, 11 * k, c);                   /* door */
 }
 
-/* the consoles themselves, drawn small: grey PS1 from above, black PS2, original curved PS3 */
-static u32 ic(u32 c, u32 a) { return (c & 0xffffff00) | ((c & 0xff) * a / 0xff); }
-
-static void half_ellipse(float cx, float cy, float rx, float ry, u32 c)
-{
-    int i;
-    tiny3d_SetPolygon(TINY3D_QUADS);
-    for (i = 0; i < 16; i++) {
-        float a0 = 3.1415926f + i * 3.1415926f / 16, a1 = a0 + 3.1415926f / 16;
-        tiny3d_VertexPos(cx, cy, 1000);                                 tiny3d_VertexColor(c);
-        tiny3d_VertexPos(cx + rx * cosf(a0), cy + ry * sinf(a0), 1000); tiny3d_VertexColor(c);
-        tiny3d_VertexPos(cx + rx * cosf(a1), cy + ry * sinf(a1), 1000); tiny3d_VertexColor(c);
-        tiny3d_VertexPos(cx, cy, 1000);                                 tiny3d_VertexColor(c);
-    }
-    tiny3d_End();
-}
-
-static void icon_console(float cx, float cy, float k, int p, u32 a)
-{
-    if (p == 0) {                       /* PS1, seen from above: lid on the left, buttons on the right */
-        float w = 50 * k, h = 38 * k, x = cx - w / 2, y = cy - h / 2;
-        gfx_rect(x + 2 * k, y + 3 * k, w, h, ic(0x00000060, a));
-        gfx_rect(x, y, w, h, ic(0xc9cad0ff, a));
-        gfx_rect(x, y + h - 9 * k, w, 9 * k, ic(0xa9abb3ff, a));                    /* front edge */
-        gfx_rect(x + 8 * k, y + h - 6 * k, 9 * k, 3 * k, ic(0x3a3c44ff, a));        /* controller ports */
-        gfx_rect(x + 22 * k, y + h - 6 * k, 9 * k, 3 * k, ic(0x3a3c44ff, a));
-        circle_fill(x + 17 * k, y + 14 * k, 11.5f * k, ic(0xa3a5adff, a));           /* disc lid */
-        circle_fill(x + 17 * k, y + 14 * k, 9.5f * k, ic(0xbfc1c8ff, a));
-        circle_fill(x + 40 * k, y + 8 * k, 3 * k, ic(0x8a8d96ff, a));               /* open, power, reset */
-        circle_fill(x + 40 * k, y + 16 * k, 3 * k, ic(0x8a8d96ff, a));
-        circle_fill(x + 40 * k, y + 24 * k, 2.4f * k, ic(0x8a8d96ff, a));
-    } else if (p == 1) {                /* PS2: black slab with the stepped front and blue light */
-        float w = 54 * k, x = cx - w / 2, y = cy - 13 * k;
-        gfx_rect(x + 2 * k, y + 3 * k, w, 27 * k, ic(0x00000060, a));
-        gfx_rect(x, y, w, 15 * k, ic(0x3a3d47ff, a));
-        gfx_rect(x + 3 * k, y + 16 * k, w - 3 * k, 11 * k, ic(0x2a2c34ff, a));
-        gfx_rect(x, y, w, 1.5f * k, ic(0x5a5e6aff, a));                              /* edge light */
-        gfx_rect(x + 6 * k, y + 6 * k, 26 * k, 1.5f * k, ic(0x4a4e5aff, a));        /* disc tray */
-        gfx_rect(x + w - 10 * k, y + 5 * k, 4 * k, 4 * k, ic(0x3d7bffff, a));       /* blue light */
-        gfx_rect(x + 6 * k, y + 20 * k, 5 * k, 3 * k, ic(0x4a4e5aff, a));           /* ports */
-        gfx_rect(x + 14 * k, y + 20 * k, 5 * k, 3 * k, ic(0x4a4e5aff, a));
-    } else {                            /* PS3: the original, curved glossy top and a silver band */
-        float w = 54 * k, x = cx - w / 2, y = cy - 4 * k;
-        gfx_rect(x + 2 * k, y - 6 * k, w, 24 * k, ic(0x00000050, a));
-        half_ellipse(cx, y, w / 2, 12 * k, ic(0x343844ff, a));
-        half_ellipse(cx - 6 * k, y - 2 * k, w / 3, 6 * k, ic(0x3c404cff, a));       /* shine */
-        gfx_rect(x, y, w, 12 * k, ic(0x24272fff, a));
-        gfx_rect(x, y + 12 * k, w, 3 * k, ic(0xc4cad4ff, a));                        /* silver band */
-        gfx_rect(x + 8 * k, y + 4 * k, 24 * k, 1.5f * k, ic(0x4a4e5aff, a));        /* disc slot */
-    }
-}
-
 static void draw_nav(void)
 {
     static const char *labels[4] = { "Home", "PS1", "PS2", "PS3" };

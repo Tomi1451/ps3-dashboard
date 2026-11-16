@@ -11,7 +11,8 @@
 #include "library.h"
 #include "log.h"
 
-#define MM_COVERS "/dev_hdd0/game/BLES80608/USRDIR/covers"
+#define APP_COVERS "/dev_hdd0/game/PSDB00001/USRDIR/covers"     /* from the PC cover tool */
+#define MM_COVERS "/dev_hdd0/game/BLES80608/USRDIR/covers"       /* older uploads went here */
 #define S_ISDIR_PS3(m) (((m) & 0170000) == 0040000)
 
 GameList library[PLAT_COUNT];
@@ -184,7 +185,8 @@ static void on_ps3_folder(const char *dir, const char *name, int isdir, void *ct
     read_sfo(sfo, g->title, sizeof(g->title), g->id, sizeof(g->id));
     if (!g->title[0]) tidy_title(g->title, name, sizeof(g->title));
     detect_region(g, name);
-    if (g->id[0]) { snprintf(base, sizeof(base), MM_COVERS "/%s", g->id); find_image(g->cover, sizeof(g->cover), base); }
+    if (g->id[0]) { snprintf(base, sizeof(base), APP_COVERS "/%s", g->id); find_image(g->cover, sizeof(g->cover), base); }
+    if (g->id[0] && !g->cover[0]) { snprintf(base, sizeof(base), MM_COVERS "/%s", g->id); find_image(g->cover, sizeof(g->cover), base); }
     if (!g->cover[0]) {
         snprintf(icon, sizeof(icon), "%s/%s/PS3_GAME/ICON0.PNG", dir, name);
         if (file_exists(icon)) strncpy(g->cover, icon, sizeof(g->cover) - 1);
