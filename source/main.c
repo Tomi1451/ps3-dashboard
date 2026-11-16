@@ -35,7 +35,7 @@
 #include <strings.h>
 #include <sysutil/sysutil.h>
 
-#define APP_VERSION "v0.34"
+#define APP_VERSION "v0.35"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -939,7 +939,7 @@ enum { S_HEADER, S_BGSTYLE, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES,
 static const struct { int id; const char *label; const char *help; } set_items[] = {
     { S_HEADER, "APPEARANCE", NULL },
     { S_BGSTYLE, "Background style", "PS1: shaded spheres floating on blue, like the PlayStation start-up menu. PS2: cubes and coloured light trails in a dark fog, like the PS2 browser. PS3: the XMB wave and sparkles." },
-    { S_THEME,  "Background colour", "Classic = each style's own colours. Original changes with the date like the real XMB and gets darker at night. Or keep one of the PS3's twelve month colours." },
+    { S_THEME,  "Background colour", "Classic = each style's own colours. Original changes with the date like the real XMB and gets darker at night. Or keep one of the PS3's own colours." },
     { S_BRIGHT, "Background brightness", "How bright the background is." },
     { S_WAVE,   "Background animation", "Off = a still picture. On = everything moves. On + extras adds more: sparkles (PS3), more light trails (PS2), more spheres (PS1)." },
     { S_FONT,   "Font", "The PS3's own system fonts. Fonts your firmware doesn't have are skipped." },
