@@ -30,6 +30,7 @@
 #define BDVD_DRIVE 0x101000000000006ULL
 #define MAX_PARTS  32
 #define MAX_TRACKS 99
+#define BLANK_DISC "/dev_hdd0/tmp/psdb_disc.iso"     /* tiny stand-in disc for folder games */
 
 typedef struct {                   /* one CD track, as Cobra wants it (SCSI track descriptor) */
     u8  reserved;
@@ -227,14 +228,194 @@ static int mount_ps2_image(const char *path)
     return 1;
 }
 
-/* a PS3 game folder (GAMES/...): point /dev_bdvd at it */
-static int map_folder(const char *path)
+/* A 128 KB "disc" with just the game's ID on it. Folder games are read from the HDD, but many
+   (GTA V for one) check that a PS3 disc is in the drive and say the data is corrupted if not,
+   so this stands in as the disc while /dev_bdvd points at the folder. The layout is the same
+   minimal PS3 disc image Cobra-based loaders (webMAN MOD, IRISMAN) use for this. */
+static int write_blank_disc(const char *title_id)
 {
-    s32 r = map_path("/dev_bdvd", path);
+    u8 *buf = calloc(1, 128 * 1024);
+    s32 fd; u64 wrote = 0;
+    int ok = 0;
+    if (!buf) return 0;
+    buf[3] = 2;
+    buf[0x17] = 0x3F;
+    strcpy((char *)buf+0x800, "PlayStation3");
+    memcpy(buf+0x810, title_id, 4);
+    buf[0x814] = '-';
+    memcpy(buf+0x815, title_id+4, 5);
+    memset(buf+0x81A, ' ', 0x16);
+    buf[0x8000] = 1;
+    strcpy((char *)buf+0x8001, "CD001");
+    buf[0x8006] = 1;
+    memset(buf+0x8008, ' ', 0x20);
+    memcpy(buf+0x8028, "PS3VOLUME", 9);
+    memset(buf+0x8031, ' ', 0x17);
+    buf[0x8050] = buf[0x8057] = 0x40;
+    buf[0x8078] = buf[0x807B] = buf[0x807C] = buf[0x807F] = 1;
+    buf[0x8081] = buf[0x8082] = 8;
+    buf[0x8084] = buf[0x808B] = 0xA;
+    buf[0x808C] = 0x14;
+    buf[0x8097] = 0x15;
+    buf[0x809C] = 0x22;
+    buf[0x809E] = buf[0x80A5] = 0x18;
+    buf[0x80A7] = buf[0x80AC] = 8;
+    buf[0x80AE] = 0x6F;
+    buf[0x80AF] = 7;
+    buf[0x80B0] = 0x16;
+    buf[0x80B1] = 2;
+    buf[0x80B2] = 0x2B;
+    buf[0x80B3] = buf[0x80B5] = 2;
+    buf[0x80B8] = buf[0x80BB] = buf[0x80BC] = 1;
+    memcpy(buf+0x80be, "PS3VOLUME", 9);
+    memset(buf+0x80C7, ' ', 0x266);
+    strcpy((char *)buf+0x832d, "2007111105051300");
+    strcpy((char *)buf+0x833e, "0000000000000000");
+    strcpy((char *)buf+0x834f, "0000000000000000");
+    strcpy((char *)buf+0x8360, "0000000000000000");
+    buf[0x8371] = 1;
+    buf[0x8800] = 2;
+    strcpy((char *)buf+0x8801, "CD001");
+    buf[0x8806] = 1;
+    buf[0x8829] = 'P';
+    buf[0x882B] = 'S';
+    buf[0x882D] = '3';
+    buf[0x882F] = 'V';
+    buf[0x8831] = 'O';
+    buf[0x8833] = 'L';
+    buf[0x8835] = 'U';
+    buf[0x8837] = 'M';
+    buf[0x8839] = 'E';
+    buf[0x8850] = buf[0x8857] = 0x40;
+    strcpy((char *)buf+0x8858, "%/@");
+    buf[0x8878] = buf[0x887B] = buf[0x887C] = buf[0x887F] = 1;
+    buf[0x8881] = buf[0x8882] = 8;
+    buf[0x8884] = buf[0x888B] = 0xA;
+    buf[0x888C] = 0x16;
+    buf[0x8897] = 0x17;
+    buf[0x889C] = 0x22;
+    buf[0x889E] = buf[0x88A5] = 0x19;
+    buf[0x88A7] = buf[0x88AC] = 8;
+    buf[0x88AE] = 0x6F;
+    buf[0x88AF] = 7;
+    buf[0x88B0] = 0x16;
+    buf[0x88B1] = 2;
+    buf[0x88B2] = 0x2B;
+    buf[0x88B3] = buf[0x88B5] = 2;
+    buf[0x88B8] = buf[0x88BB] = buf[0x88BC] = 1;
+    buf[0x88BF] = 'P';
+    buf[0x88C1] = 'S';
+    buf[0x88C3] = '3';
+    buf[0x88C5] = 'V';
+    buf[0x88C7] = 'O';
+    buf[0x88C9] = 'L';
+    buf[0x88CB] = 'U';
+    buf[0x88CD] = 'M';
+    buf[0x88CF] = 'E';
+    strcpy((char *)buf+0x8B2D, "2007111105051300");
+    strcpy((char *)buf+0x8B3E, "0000000000000000");
+    strcpy((char *)buf+0x8B4F, "0000000000000000");
+    strcpy((char *)buf+0x8b60, "0000000000000000");
+    buf[0x8B71] = 1;
+    buf[0x9000] = 0xFF;
+    strcpy((char *)buf+0x9001, "CD001");
+    buf[0xA000] = 1;
+    buf[0xA002] = 0x18;
+    buf[0xA006] = 1;
+    buf[0xA800] = 1;
+    buf[0xA805] = 0x18;
+    buf[0xA807] = 1;
+    buf[0xB000] = 1;
+    buf[0xB002] = 0x19;
+    buf[0xB006] = 1;
+    buf[0xB800] = 1;
+    buf[0xB805] = 0x19;
+    buf[0xB807] = 1;
+    buf[0xC000] = 0x28;
+    buf[0xC002] = buf[0xC009] = 0x18;
+    buf[0xC00B] = buf[0xC010] = 8;
+    buf[0xC012] = 0x6F;
+    buf[0xC013] = 7;
+    buf[0xC014] = 0x16;
+    buf[0xC015] = 2;
+    buf[0xC016] = 0x2B;
+    buf[0xC017] = buf[0xC019] = 2;
+    buf[0xC01C] = buf[0xC01F] = buf[0xC020] = 1;
+    buf[0xC028] = 0x28;
+    buf[0xC02A] = buf[0xC031] = 0x18;
+    buf[0xC033] = buf[0xC038] = 8;
+    buf[0xC03A] = 0x6F;
+    buf[0xC03B] = 7;
+    buf[0xC03C] = 0x16;
+    buf[0xC03D] = 2;
+    buf[0xC03E] = 0x2B;
+    buf[0xC03F] = buf[0xC041] = 2;
+    buf[0xC044] = buf[0xC047] = buf[0xC048] = buf[0xC049] = 1;
+    buf[0xC800] = 0x28;
+    buf[0xC802] = buf[0xC809] = 0x19;
+    buf[0xC80B] = buf[0xC810] = 8;
+    buf[0xC812] = 0x6F;
+    buf[0xC813] = 7;
+    buf[0xC814] = 0x16;
+    buf[0xC815] = 2;
+    buf[0xC816] = 0x2B;
+    buf[0xC817] = buf[0xC819] = 2;
+    buf[0xC81C] = buf[0xC81F] = buf[0xC820] = 1;
+    buf[0xC828] = 0x28;
+    buf[0xC82A] = buf[0xC831] = 0x19;
+    buf[0xC833] = buf[0xC838] = 8;
+    buf[0xC83A] = 0x6F;
+    buf[0xC83B] = 7;
+    buf[0xC83C] = 0x16;
+    buf[0xC83D] = 2;
+    buf[0xC83E] = 0x2B;
+    buf[0xC83F] = buf[0xC841] = 2;
+    buf[0xC844] = buf[0xC847] = buf[0xC848] = buf[0xC849] = 1;
+
+    if (sysLv2FsOpen(BLANK_DISC, SYS_O_WRONLY | SYS_O_CREAT | SYS_O_TRUNC, &fd, 0666, NULL, 0) == 0) {
+        ok = sysLv2FsWrite(fd, buf, 128 * 1024, &wrote) == 0 && wrote == 128 * 1024;
+        sysLv2FsClose(fd);
+    }
+    free(buf);
+    return ok;
+}
+
+/* the game's ID, from its folder name "Name [BLES01807]" or its PARAM.SFO */
+static void folder_title_id(const Game *g, char *id)
+{
+    const char *b;
+    strcpy(id, "TEST00000");
+    if (g->id[0] && strlen(g->id) >= 9) { memcpy(id, g->id, 9); id[9] = 0; return; }
+    b = strrchr(g->path, '[');
+    if (b && strlen(b) >= 10 && b[10] == ']') { memcpy(id, b + 1, 9); id[9] = 0; }
+}
+
+/* a PS3 game folder (GAMES/...): point /dev_bdvd at it, with a stand-in disc in the drive */
+static int map_folder(const Game *g, const char *path)
+{
+    char id[16];
+    u32 real, eff, img;
+    s32 r;
+    folder_title_id(g, id);
+    if (!write_blank_disc(id)) log_step("cobra: couldn't write %s", BLANK_DISC);
+    r = map_path("/dev_bdvd", path);
     log_step("cobra: map /dev_bdvd -> %s = %d", path, r);
     if (r) return 0;
     map_path("//dev_bdvd", path);
     map_path("/app_home", path);
+    disc_types(&real, &eff, &img);
+    if (!real) {                                 /* no real disc: put the stand-in disc in */
+        static char file[64];
+        static u32 list[1];
+        fake_eject();
+        usleep(20000);
+        strcpy(file, BLANK_DISC);
+        list[0] = (u32)(u64) file;
+        r = sc8_3(OP_MOUNT_PS3_DISCFILE, 1, (u64)(u32)(u64) list);
+        log_step("cobra: stand-in disc for %s = %d", id, r);
+        fake_insert();
+        usleep(20000);
+    }
     return 1;
 }
 
@@ -248,7 +429,7 @@ int game_mount(const Game *g, const char *path, char *why, int why_len)
     usleep(200000);
 
     if (g->plat == PLAT_PS3) {
-        if (is_dir(path)) return map_folder(path);
+        if (is_dir(path)) return map_folder(g, path);
         if (mount_ps3_image(path)) return 1;
         snprintf(why, why_len, "Cobra couldn't mount the PS3 image.");
         return 0;
