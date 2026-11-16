@@ -17,7 +17,7 @@ Download `PS_Dashboard.pkg` from the **Releases → latest** page, copy it to a 
 ## Build
 GitHub Actions builds the PKG on every push (`.github/workflows/build.yml`) with the ps3dev toolchain, PSL1GHT and ps3libraries (Tiny3D, FreeType).
 
-Fonts: uses the PS3's own system font; falls back to the bundled DejaVu Sans (see `data/DEJAVU-LICENSE.txt`).
+Fonts: only the PS3's own system fonts, read from the console's flash - no font is bundled.
 
 ## Previewing the UI on a PC
 `tools/preview/preview.sh "<buttons>" "<frames>"` compiles the real UI code against PC stand-ins for Tiny3D/libfont and renders frames to PNG (needs gcc, FreeType, Python + Pillow + numpy). Buttons, one per frame: `U D L R X O T S [ ]`, `.` = none. Example: `tools/preview/preview.sh "....RR....T" "5,15"`.

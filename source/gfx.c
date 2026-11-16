@@ -11,7 +11,9 @@
 #include FT_FREETYPE_H
 
 #include "gfx.h"
-#include "dejavusans_ttf_bin.h"
+#ifdef PREVIEW
+#include "dejavusans_ttf_bin.h"     /* PC preview only: stands in for the PS3 fonts */
+#endif
 #include "log.h"
 
 /* Tiny3D calls this (weak symbol) when something goes wrong inside it */
@@ -55,8 +57,8 @@ static void ttf_to_bitmap(u8 chr, u8 *bitmap, short *w, short *h, short *y_corre
     adv[chr] = *w;
 }
 
-/* Fonts: the PS3's own system fonts (in flash, so nothing extra to install) plus the
-   bundled DejaVu. Each choice lists the file names used across firmware versions. */
+/* Fonts: the PS3's own system fonts, read from flash (nothing extra is bundled).
+   Each choice lists the file names used across firmware versions. */
 typedef struct { const char *name; const char *files[3]; } FontChoice;
 static const FontChoice fonts[] = {
     { "PS3 System (Seurat)",  { "SCE-PS3-SR-R-LATIN2.TTF", "SCE-PS3-SR-R-LATIN.TTF", NULL } },
@@ -67,10 +69,8 @@ static const FontChoice fonts[] = {
     { "New Rodin",            { "SCE-PS3-NR-R-JPN.TTF", "SCE-PS3-NR-R-EXT.TTF", NULL } },
     { "Matisse (serif)",      { "SCE-PS3-MT-R-LATIN2.TTF", "SCE-PS3-MT-R-LATIN.TTF", NULL } },
     { "VAG Rounded",          { "SCE-PS3-VR-R-LATIN2.TTF", "SCE-PS3-VR-R-LATIN.TTF", NULL } },
-    { "DejaVu Sans (built in)", { NULL } },
 };
 #define FONT_COUNT ((int) (sizeof(fonts) / sizeof(fonts[0])))
-#define FONT_BUILTIN (FONT_COUNT - 1)
 static int font_cur = -1;
 static signed char font_avail[FONT_COUNT];    /* 0 unknown, 1 yes, -1 no */
 static u8 *font_mem = NULL;
@@ -84,8 +84,9 @@ static int open_font(int i)
 {
     char path[160];
     int k;
-    if (i == FONT_BUILTIN)
-        return FT_New_Memory_Face(ft_lib, (const FT_Byte *) dejavusans_ttf_bin, dejavusans_ttf_bin_size, 0, &ft_face) == 0;
+#ifdef PREVIEW
+    return FT_New_Memory_Face(ft_lib, (const FT_Byte *) dejavusans_ttf_bin, dejavusans_ttf_bin_size, 0, &ft_face) == 0;
+#endif
     for (k = 0; fonts[i].files[k]; k++) {
         snprintf(path, sizeof(path), "/dev_flash/data/font/%s", fonts[i].files[k]);
         if (FT_New_Face(ft_lib, path, 0, &ft_face) == 0) return 1;
@@ -112,7 +113,7 @@ int gfx_font_set(int want)
     if (want < 0 || want >= FONT_COUNT) want = 0;
     if (want == font_cur && font_ok) return font_cur;
     order[n++] = want;
-    for (i = 0; i < FONT_COUNT; i++) if (i != want) order[n++] = i;   /* fallbacks: system font first, DejaVu last */
+    for (i = 0; i < FONT_COUNT; i++) if (i != want) order[n++] = i;   /* fallbacks: the other system fonts in turn */
 
     FT_Init_FreeType(&ft_lib);
     for (i = 0; i < n; i++)

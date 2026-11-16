@@ -30,7 +30,7 @@ SCETOOL_FLAGS	+=
 TARGET		:=	PS_Dashboard
 BUILD		:=	build
 SOURCES		:=	source
-DATA		:=	data
+DATA		:=
 SHADERS		:=	shaders
 INCLUDES	:=	include
 
