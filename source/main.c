@@ -37,7 +37,7 @@
 #include <strings.h>
 #include <sysutil/sysutil.h>
 
-#define APP_VERSION "v0.44"
+#define APP_VERSION "v0.45"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -755,7 +755,7 @@ static void draw_info(void)
 
 /* ---------------------------------------------------------------- settings window */
 enum { S_HEADER, S_BGSTYLE, S_THEME, S_BRIGHT, S_WAVE, S_FONT, S_SIZE, S_TITLES, S_SORT, S_OPEN, S_DISC, S_RESCAN, S_RESET, S_ABOUT,
-       S_VIEW, S_SOUNDS, S_DIM, S_DIRECT, S_CARD, S_CLEAR_RECENT, S_CLEAR_FAVS, S_EJECT,
+       S_VIEW, S_SOUNDS, S_DIM, S_DIRECT, S_DIRECT3, S_CARD, S_CLEAR_RECENT, S_CLEAR_FAVS, S_EJECT,
        S_I_SPACE, S_I_TEMP, S_I_FW, S_I_WEBMAN, S_I_FTP, S_I_GAMES, S_I_USB, S_I_VERSION,
        S_P_EXIT, S_P_RESTART, S_P_SHUTDOWN };
 static const struct { int id; const char *label; const char *help; } set_items[] = {
@@ -777,7 +777,8 @@ static const struct { int id; const char *label; const char *help; } set_items[]
     { S_CLEAR_RECENT, "Clear recently played", "Press X twice to empty the Recently played shelf on Home. Your games aren't touched." },
     { S_CLEAR_FAVS,   "Clear favourites", "Press X twice to remove every star. Your games aren't touched." },
     { S_HEADER, "STARTING GAMES", NULL },
-    { S_DIRECT, "Start PS1 games", "Directly: PS1 games start straight from here. Through the XMB: the game is loaded and you start it from its disc icon. PS3 games always start directly; PS2 games always from the XMB." },
+    { S_DIRECT3, "Start PS3 games", "From the XMB (recommended): the game is loaded and starts from its disc icon, the way the PS3 boots a disc - every game works this way. Directly: no XMB in between, but some games (GTA V) won't start like that." },
+    { S_DIRECT, "Start PS1 games", "Directly: PS1 games start straight from here. Through the XMB: the game is loaded and you start it from its disc icon. PS2 games always start from the XMB." },
     { S_CARD,   "PS1 memory card", "Where PS1 saves go when games start directly - one of your cards from the XMB Memory Card Utility. Automatic = the one used last." },
     { S_HEADER, "DISCS", NULL },
     { S_DISC,   "Ask when a disc is inserted", "Shows Play / Install / Make ISO when you put a disc in. Turn off to leave discs to the XMB." },
@@ -845,6 +846,7 @@ static const char *set_value(int id, char *buf, size_t n)
         case S_I_USB:    { int u = sysinfo_get()->usb_drives; if (!u) return "None"; snprintf(buf, n, "%d connected", u); return buf; }
         case S_I_VERSION:return APP_VERSION;
         case S_DIRECT: return settings.direct_ps1 ? "Directly" : "Through the XMB";
+        case S_DIRECT3: return settings.direct_ps3 ? "Directly" : "From the XMB";
         case S_CARD:   {
             const char *c = ps1_card_in_use();
             if (settings.ps1_card[0] && !strcmp(c, settings.ps1_card)) return c;
@@ -868,7 +870,7 @@ static const char *sec_name(int h)
     switch (set_items[h + 1].id) {
         case S_BGSTYLE: return "Appearance";
         case S_VIEW:    return "Library";
-        case S_DIRECT:  return "Starting games";
+        case S_DIRECT: case S_DIRECT3: return "Starting games";
         case S_DISC:    return "Discs";
         case S_I_SPACE: return "System";
         default:        return "Power";
@@ -1020,6 +1022,7 @@ static void settings_change(int d, int pressed_x)
         case S_SOUNDS: settings.sounds = !settings.sounds; break;
         case S_DIM:    settings.dim = (settings.dim + d + 4) % 4; break;
         case S_DIRECT: settings.direct_ps1 = !settings.direct_ps1; break;
+        case S_DIRECT3: settings.direct_ps3 = !settings.direct_ps3; break;
         case S_CARD: {                       /* Automatic, then each card in turn */
             static char names[32][64];
             int cnt = ps1_cards(names, 32), cur = -1, k;
@@ -1147,9 +1150,9 @@ static void start_disc(const Game *g, int disc_no)    /* disc_no 1..4 */
 {
     char line[220];
     const char *path = disc_no <= 1 ? g->path : g->discs[disc_no - 2];
-    /* PS3 games always start straight from here (folder games can only start that way);
-       PS1 too when "Start games: Directly" is on; PS2 games go through the XMB */
-    int direct = g->plat == PLAT_PS3 || (g->plat == PLAT_PS1 && settings.direct_ps1);
+    /* "Directly" settings: PS3 and PS1 games can start straight from here; otherwise (and
+       always for PS2) the game is loaded and starts from its disc icon on the XMB */
+    int direct = (g->plat == PLAT_PS3 && settings.direct_ps3) || (g->plat == PLAT_PS1 && settings.direct_ps1);
     int wm = webman_alive();                     /* only a backup - not needed */
     if (g->ndiscs) snprintf(line, sizeof(line), "Starting %s (disc %d) ...", g->title, disc_no);
     else snprintf(line, sizeof(line), "Starting %s ...", g->title);
@@ -1163,7 +1166,7 @@ static void start_disc(const Game *g, int disc_no)    /* disc_no 1..4 */
         log_step("direct start failed: %s", fail_why);
     }
     if (wm && launch_path(path)) { log_step("handed to webMAN (backup)"); leave_app(); }
-    if (!direct || g->plat == PLAT_PS1) {
+    {
         char why2[320];
         if (game_mount(g, path, why2, sizeof(why2))) leave_to_xmb(g->title);
         if (!fail_why[0]) snprintf(fail_why, sizeof(fail_why), "%s", why2);
@@ -1248,7 +1251,7 @@ static void disc_action(void)
         gfx_begin(); gfx_background(anim * 0.2f); draw_message("Loading disc", line); gfx_end();
         log_step("disc: play");
         fail_why[0] = 0;
-        if (disc.type == DISC_PS3) direct_start_ps3_disc(disc.id, fail_why, sizeof(fail_why));   /* only returns if it failed */
+        if (disc.type == DISC_PS3 && settings.direct_ps3) direct_start_ps3_disc(disc.id, fail_why, sizeof(fail_why));   /* only returns if it failed */
         ok = webman_alive() && launch_disc();
         if (ok) { log_step("handed to webMAN (backup)"); leave_app(); }
         game_unmount();                               /* make sure the XMB shows the real disc */

@@ -12,8 +12,8 @@
 
 #define SETTINGS_FILE "/dev_hdd0/game/PSDB00001/USRDIR/settings.txt"
 
-const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "", 2 };
-Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "", 2 };
+const Settings settings_defaults = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "", 2, 0 };
+Settings settings = { 0, 2, 2, 0, 1, 1, 0, 0, 0, 1, 0, 0, 2, 1, "", 2, 0 };
 
 static const struct { const char *key; int *v; int lo, hi; } keys[] = {
     { "colour=",     &settings.theme,      0, 99 },   /* was theme= before v0.34 (different list) */
@@ -31,6 +31,7 @@ static const struct { const char *key; int *v; int lo, hi; } keys[] = {
     { "sounds=",     &settings.sounds,     0, 1 },
     { "dim=",        &settings.dim,        0, 3 },
     { "direct_ps1=", &settings.direct_ps1, 0, 1 },
+    { "direct_ps3=", &settings.direct_ps3, 0, 1 },
 };
 #define NKEYS ((int) (sizeof(keys) / sizeof(keys[0])))
 

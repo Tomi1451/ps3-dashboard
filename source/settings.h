@@ -18,7 +18,8 @@ typedef struct {
     int dim;          /* dim when idle: 0 off, 1 5 min, 2 15 min, 3 30 min */
     int direct_ps1;   /* 1 = start PS1 games straight from the dashboard (no XMB in between) */
     char ps1_card[64];/* memory card for slot 1 (file in /dev_hdd0/savedata/vmc), "" = automatic */
-    int bgstyle;      /* background: 0 PS1 spheres, 1 PS2 cubes and light trails, 2 PS3 wave */
+    int bgstyle;
+    int direct_ps3;   /* 1 = start PS3 games straight from the dashboard; 0 = load, then start from the XMB */      /* background: 0 PS1 spheres, 1 PS2 cubes and light trails, 2 PS3 wave */
 } Settings;
 
 extern Settings settings;
