@@ -150,3 +150,6 @@ int cd_begin(const char *t, const char *i) { return 1; } int cd_step(void) { ret
 int cd_active(void) { return 1; } int cd_done(void) { return 0; } int cd_failed(void) { return 0; }
 float cd_progress(void) { return 0.42f; } u64 cd_bytes_done(void) { return 7600ULL << 20; } u64 cd_bytes_total(void) { return 18100ULL << 20; }
 const char *cd_message(void) { return "Grand Theft Auto V [BLES01807]"; } const char *cd_output(void) { return "/dev_hdd0/GAMES/Grand Theft Auto V [BLES01807]"; }
+#include "../../../source/delete.h"
+int del_plan(const Game *g, u64 *b, int *f) { *b = 5ULL << 30; *f = 2741; return 1; }
+int del_run(const Game *g, void (*p)(int)) { return 1; }

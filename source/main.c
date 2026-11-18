@@ -29,6 +29,7 @@
 #include "copydisc.h"
 #include "cobra.h"
 #include "ftp.h"
+#include "delete.h"
 #include <sys/systime.h>
 #include <sys/process.h>
 #include <lv2/process.h>
@@ -37,7 +38,7 @@
 #include <strings.h>
 #include <sysutil/sysutil.h>
 
-#define APP_VERSION "v0.45"
+#define APP_VERSION "v0.46"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -213,6 +214,7 @@ static int sel[PLAT_COUNT];
 static int top_row[PLAT_COUNT];
 static int mode = 0;            /* 0 grid, 1 info panel, 2 couldn't start, 3 disc inserted */
 static char fail_why[320] = "";
+static char fail_title[64] = "Couldn't start the game";
 static int prev_mode = 0, disc_choice = 0;
 static DiscInfo disc;
 static float anim = 0.0f;       /* selection pulse */
@@ -1109,10 +1111,15 @@ static void draw_hints(void)
     } else if (mode == 3 || mode == 5) {
         x = hint(x, y, 'x', "Select");
         x = hint(x, y, 'o', mode == 3 ? "Not now" : "Back");
+    } else if (mode == 8) {
+        x = hint_pill(x, y, "LEFT / RIGHT", "Choose");
+        x = hint(x, y, 'x', "OK");
+        x = hint(x, y, 'o', "Cancel");
     } else if (mode == 1) {
         x = hint(x, y, 'x', "Play");
         x = hint(x, y, 'o', "Back");
         x = hint(x, y, 's', cur_game() && cur_game()->fav ? "Unfavourite" : "Favourite");
+        x = hint_pill(x, y, "SELECT", "Delete");
         if (info_lines_total > info_lines_visible) x = hint_pill(x, y, "UP / DOWN", "Scroll");
     } else {
         int have = cur_game() != NULL;
@@ -1131,6 +1138,76 @@ static void draw_hints(void)
         x = hint_pill(x, y, "START", "Exit");
     }
     { const char *ver = APP_VERSION; gfx_text(SCREEN_W - MARGIN_X - gfx_text_w(18, ver), y + 8, 18, 0xffffff60, ver); }
+}
+
+/* ---------------------------------------------------------------- delete a game */
+static const Game *del_game = NULL;
+static int del_choice = 0, del_files = 0, del_from = 1;
+static u64 del_bytes = 0;
+
+static void del_open(const Game *g)
+{
+    if (!g) return;
+    del_game = g; del_choice = 0;
+    gfx_begin(); gfx_background(anim * 0.2f); draw_message("Delete game", "Working out what to delete..."); gfx_end();
+    del_plan(g, &del_bytes, &del_files);
+    del_from = mode; mode = 8;
+    sound_play(SND_TAB);
+}
+
+static void draw_delete(void)
+{
+    const Game *g = del_game;
+    char b[300];
+    float w = 1000, h = 400, x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2 - 20;
+    gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0xc8));
+    gfx_rect_v(x, y, w, h, gfx_theme_col(1, 0xff), gfx_theme_col(2, 0xff));
+    gfx_frame(x, y, w, h, 1, 0xffffff40);
+    gfx_rect(x, y, w, 4, 0xff6070ff);
+    gfx_text(x + 50, y + 36, 20, 0xffffff8c, "DELETE THIS GAME?");
+    gfx_text_fit(x + 50, y + 70, 38, 0xffffffff, g->title, w - 100);
+    if (del_bytes >= 1073741824ULL) snprintf(b, sizeof(b), "%d file%s, %.1f GB, from %s.", del_files, del_files == 1 ? "" : "s", del_bytes / 1073741824.0, strncmp(g->path, "/dev_usb", 8) ? "the internal HDD" : "a USB drive");
+    else snprintf(b, sizeof(b), "%d file%s, %.0f MB, from %s.", del_files, del_files == 1 ? "" : "s", del_bytes / 1048576.0, strncmp(g->path, "/dev_usb", 8) ? "the internal HDD" : "a USB drive");
+    gfx_text(x + 50, y + 140, 24, 0xffffffd0, b);
+    gfx_text_wrap(x + 50, y + 182, 21, 0xffffffa0, "This can't be undone. Your saves and any installed updates are kept.", w - 100, 2);
+    {   /* Cancel / Delete */
+        static const char *opt[2] = { "Cancel", "Delete" };
+        int i;
+        for (i = 0; i < 2; i++) {
+            float bw = 220, bx = x + w - 50 - (2 - i) * (bw + 20) + 20, by = y + h - 100;
+            int on = (del_choice == i);
+            u32 fill = on ? (i ? 0xff5060ff : 0xffffffff) : 0xffffff1c;
+            gfx_rect(bx, by, bw, 56, fill);
+            if (!on) gfx_frame(bx, by, bw, 56, 1, 0xffffff40);
+            gfx_text_center(bx + bw / 2, by + 14, 24, on ? (i ? 0xffffffff : gfx_theme_col(3, 0xff)) : 0xffffffc0, opt[i]);
+        }
+    }
+}
+
+static void del_progress(int n)
+{
+    char line[200];
+    snprintf(line, sizeof(line), "%s  -  %d of %d files", del_game->title, n, del_files);
+    gfx_begin(); gfx_background(anim * 0.2f); draw_message("Deleting", line); gfx_end();
+}
+
+static void delete_input(void)
+{
+    if (pad_pressed & (B_LEFT | B_RIGHT)) { del_choice = !del_choice; sound_play(SND_MOVE); }
+    if (pad_pressed & B_CIRCLE) { mode = del_from; sound_play(SND_BACK); return; }
+    if (!(pad_pressed & B_CROSS)) return;
+    if (del_choice == 0) { mode = del_from; sound_play(SND_BACK); return; }
+    del_progress(0);
+    int ok = del_run(del_game, del_progress);
+    del_game = NULL;
+    rescan_library();
+    mode = 0;
+    if (!ok) {
+        snprintf(fail_title, sizeof(fail_title), "Not everything was deleted");
+        snprintf(fail_why, sizeof(fail_why), "Some files couldn't be deleted (the log has the list). The game has been taken out of your library if its main file went.");
+        mode = 2;
+    }
+    sound_play(SND_BACK);
 }
 
 /* ---------------------------------------------------------------- main */
@@ -1172,6 +1249,7 @@ static void start_disc(const Game *g, int disc_no)    /* disc_no 1..4 */
         if (!fail_why[0]) snprintf(fail_why, sizeof(fail_why), "%s", why2);
     }
     if (!fail_why[0]) snprintf(fail_why, sizeof(fail_why), "The game couldn't be loaded.");
+    snprintf(fail_title, sizeof(fail_title), "Couldn't start the game");
     mode = 2;
 }
 
@@ -1585,11 +1663,14 @@ s32 main(s32 argc, const char *argv[])
                 else if (pad_pressed & B_CROSS) start_game(g);
             }
             if (pad_pressed & B_START) break;
+        } else if (mode == 8) {
+            delete_input();
         } else if (mode == 1) {
             if ((pad_pressed & B_DOWN) && info_scroll + info_lines_visible < info_lines_total) info_scroll++;
             if ((pad_pressed & B_UP) && info_scroll > 0) info_scroll--;
             if (g && (pad_pressed & B_SQUARE)) { fav_toggle(g); sound_play(SND_STAR); }
-            if (pad_pressed & (B_CIRCLE | B_TRIANGLE)) { mode = 0; sound_play(SND_BACK); if (ON_HOME) home_build(); }
+            if (g && (pad_pressed & B_SELECT)) del_open(g);
+            else if (pad_pressed & (B_CIRCLE | B_TRIANGLE)) { mode = 0; sound_play(SND_BACK); if (ON_HOME) home_build(); }
             else if (g && (pad_pressed & B_CROSS)) start_game(g);
         } else {
             if (pad_pressed & (B_CIRCLE | B_CROSS)) mode = 0;
@@ -1597,17 +1678,18 @@ s32 main(s32 argc, const char *argv[])
 
         gfx_begin();
         gfx_background(anim * 0.2f);
-        int under = (mode == 3 || mode == 5) ? prev_mode : mode;
+        int under = (mode == 3 || mode == 5) ? prev_mode : mode == 8 ? del_from : mode;
         if (under == 1) draw_info();
         else draw_browse();
         if (mode == 3) draw_disc_popup();
         if (mode == 4) draw_keyboard();
         if (mode == 5) draw_disc_picker();
         if (mode == 7) draw_rip();
+        if (mode == 8 && del_game) draw_delete();
         if (show_settings) draw_settings_window();
         draw_hints();
         if (dimmed) gfx_rect(0, 0, SCREEN_W, SCREEN_H, 0x000000d8);
-        if (mode == 2) { char m2[400]; snprintf(m2, sizeof(m2), "%s  (Circle to close)", fail_why); draw_message("Couldn't start the game", m2); }
+        if (mode == 2) { char m2[400]; snprintf(m2, sizeof(m2), "%s  (Circle to close)", fail_why); draw_message(fail_title, m2); }
         gfx_end();
     }
     sound_shutdown();
