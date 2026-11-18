@@ -38,7 +38,7 @@
 #include <strings.h>
 #include <sysutil/sysutil.h>
 
-#define APP_VERSION "v0.46"
+#define APP_VERSION "v0.47"
 
 /* ---------------------------------------------------------------- input */
 enum {
@@ -1186,9 +1186,23 @@ static void draw_delete(void)
 
 static void del_progress(int n)
 {
-    char line[200];
-    snprintf(line, sizeof(line), "%s  -  %d of %d files", del_game->title, n, del_files);
-    gfx_begin(); gfx_background(anim * 0.2f); draw_message("Deleting", line); gfx_end();
+    char b[120];
+    float w = 1000, h = 300, x = (SCREEN_W - w) / 2, y = (SCREEN_H - h) / 2 - 20;
+    float p = del_files ? (float) n / del_files : 0;
+    if (p > 1) p = 1;
+    gfx_begin(); gfx_background(anim * 0.2f);
+    gfx_rect(0, 0, SCREEN_W, SCREEN_H, gfx_theme_col(3, 0xc8));
+    gfx_rect_v(x, y, w, h, gfx_theme_col(1, 0xff), gfx_theme_col(2, 0xff));
+    gfx_frame(x, y, w, h, 1, 0xffffff40);
+    gfx_rect(x, y, w, 4, 0xff6070ff);
+    gfx_text(x + 50, y + 36, 20, 0xffffff8c, "DELETING");
+    gfx_text_fit(x + 50, y + 70, 38, 0xffffffff, del_game->title, w - 100);
+    gfx_rect(x + 50, y + 150, w - 100, 26, 0x00000070);                 /* the bar */
+    gfx_rect(x + 50, y + 150, (w - 100) * p, 26, 0xff6070ff);
+    gfx_frame(x + 50, y + 150, w - 100, 26, 1, 0xffffff40);
+    snprintf(b, sizeof(b), "%d%%   \xB7   %d of %d files", (int) (p * 100), n, del_files);
+    gfx_text(x + 50, y + 200, 24, 0xffffffe0, b);
+    gfx_end();
 }
 
 static void delete_input(void)
@@ -1199,6 +1213,8 @@ static void delete_input(void)
     if (del_choice == 0) { mode = del_from; sound_play(SND_BACK); return; }
     del_progress(0);
     int ok = del_run(del_game, del_progress);
+    del_progress(del_files);                       /* show it full for a moment */
+    usleep(400000);
     del_game = NULL;
     rescan_library();
     mode = 0;

@@ -119,7 +119,7 @@ static int remove_tree(const char *p)
         if (!ok) { sysLv2FsChmod(p, 0777); ok = sysLv2FsUnlink(p) == 0; }
         if (!ok) log_step("delete: couldn't delete %s", p);
         files_done++;
-        if (progress_fn && files_done % 25 == 0) progress_fn(files_done);
+        if (progress_fn && files_done % 10 == 0) progress_fn(files_done);
         return ok;
     }
     s32 fd; sysFSDirent e; u64 rd;

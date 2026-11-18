@@ -152,4 +152,4 @@ float cd_progress(void) { return 0.42f; } u64 cd_bytes_done(void) { return 7600U
 const char *cd_message(void) { return "Grand Theft Auto V [BLES01807]"; } const char *cd_output(void) { return "/dev_hdd0/GAMES/Grand Theft Auto V [BLES01807]"; }
 #include "../../../source/delete.h"
 int del_plan(const Game *g, u64 *b, int *f) { *b = 5ULL << 30; *f = 2741; return 1; }
-int del_run(const Game *g, void (*p)(int)) { return 1; }
+int del_run(const Game *g, void (*p)(int)) { p(1370); return 1; }
